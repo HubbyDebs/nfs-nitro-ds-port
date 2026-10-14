@@ -405,9 +405,9 @@ void win_frame(void) {
             if (ms > worst) worst = ms;
             if (++n == 300) {
                 extern double perf_3d_ms;
-                extern int perf_tex_flushes;
-                fprintf(stderr, "[rendimiento] fotograma %u: media %.1f ms, peor %.1f ms (limite 16.7) | 3D %.1f, capas 2D %.1f, ventana %.1f, texturas renovadas %d%c",
-                        g_frame, sum / n, worst, perf_3d_ms / n, perf_2d / n, perf_present / n, perf_tex_flushes, 10);
+                extern int perf_tex_flushes, perf_tex_evicted;
+                fprintf(stderr, "[rendimiento] fotograma %u: media %.1f ms, peor %.1f ms (limite 16.7) | 3D %.1f, capas 2D %.1f, ventana %.1f, texturas renovadas %d, echadas %d%c",
+                        g_frame, sum / n, worst, perf_3d_ms / n, perf_2d / n, perf_present / n, perf_tex_flushes, perf_tex_evicted, 10);
                 perf_tex_flushes = 0;
                 perf_3d_ms = perf_2d = perf_present = 0;
                 sum = worst = 0;

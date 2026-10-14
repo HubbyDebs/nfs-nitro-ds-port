@@ -10,3 +10,9 @@ __pycache__/
 *.sav
 *.tex
 *.nmesh
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.wma

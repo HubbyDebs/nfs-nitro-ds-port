@@ -61,3 +61,34 @@ Opciones: casilla "Sonido" del menú (`NFS_SOUND=0`), `NFS_VOLUME=0..100`, `NFS_
   igual: la captura escribe la mezcla en el búfer después de que los canales 1 y 3 lean su muestra (van un búfer
   por detrás, como en la consola). HIPÓTESIS de los bits de la orden 17 (unidad = bit 31, bucle = bit 29) por los
   valores del juego. VERIFICADO que el sonido de carrera sigue llegando por ese camino (niveles normales).
+
+## Tercera ronda: ruido, tirones y música en alta calidad (2026-10-14)
+
+- **Ruido y mini tirones (VERIFICADO el fallo en el código)**: el port va a 60 fotogramas por segundo exactos
+  (`win.c`), pero el sonido se calculaba para 59,83: salía un 0,3 % más de sonido del que gasta la tarjeta. A los
+  ~3 minutos el búfer (16.384 muestras) se llenaba y se tiraban trozos (chasquidos); y si un fotograma tardaba,
+  el búfer se vaciaba y se metían ceros (cortes). Ahora: el sonido se calcula para 60 (`VBLANK_HZ`; alarmas,
+  secuencias y muestras a la vez, así que el streaming del juego sigue cuadrando) y el hilo de salida lee el búfer
+  un poco más deprisa o más despacio (±0,5 %, inaudible) para tenerlo a ~83 ms; si se vacía, se apaga suave.
+  VERIFICADO con una grabación: 3.600 fotogramas = 60,0 s de sonido, 0 huecos. La salida real (waveOut) no se pudo
+  oír en las pruebas automáticas.
+- **Salida a 48.000 Hz** (antes 32.728, la de la consola). Los canales se siguen leyendo a su frecuencia.
+- **La música de la ROM** (VERIFICADO leyendo el SDAT): 16 canciones `STRM_*`, ADPCM IMA 4 bits, **mono**,
+  22.767 Hz, 2-5 minutos cada una (34 MB en total). Títulos en los créditos (overlay 1) y en `GUIA_MUSICA.md`.
+  El juego la lee a trozos de 128 bytes con `FS_ReadFile`, la descomprime en el ARM9 y la toca por el **canal 6**
+  (PCM16, búfer en bucle de 2.048 muestras) en menú y carrera (VERIFICADO con `NFS_MUS_LOG=1`).
+- **Música sustituta** (`music.c`, guía `GUIA_MUSICA.md`): archivos del usuario en `%USERPROFILE%\nfs-nitro-music`,
+  leídos con Media Foundation (MP3, AAC, FLAC, WAV, WMA). Cómo se sincroniza:
+  1. `hle.c` avisa de cada lectura del `.sdat`: por la posición se sabe la canción y la muestra (bloques ADPCM de
+     cabecera de 4 bytes). Si cambia de canción o salta (bucle), se vuelve a buscar la posición.
+  2. El port descomprime la original y compara lo que sale por el canal con ella (correlación, ±3.000 muestras;
+     luego ±64 cada 2 s). VERIFICADO: parecido 0,90-0,999 con ajustes de ±1 muestra: el juego toca la original tal
+     cual.
+  3. Volumen que aplica el juego = canal / original (mínimos cuadrados, memoria de 50 ms): se aplica a la
+     sustituta (pausa, opciones, fundidos).
+  4. Al cargar, la energía de la original y del archivo (100 puntos/s) se compara por trozos de 5 s para saber
+     dónde cae cada trozo; volumen igualado con la energía.
+  VERIFICADO con archivos de prueba hechos de la original (1,5 s de silencio delante, 44,1 kHz, derecha invertida):
+  desfase hallado 1,50 s, 25/25, 38/38 y 35/35 trozos; en la grabación el estéreo sale invertido (correlación
+  izquierda/derecha -1,00 en el menú) a partir de ~8 s de empezar cada canción (lo que tarda en cargar).
+  En carrera el sonido pasa por la captura a 32.728 Hz (efecto del juego): ahí los agudos se recortan un poco.

@@ -123,6 +123,10 @@ void hle_ram_0200db18(Cpu *c) {
     uint8_t *buf = malloc(len ? len : 1);
     fseek(f, (long)pos, SEEK_SET);
     size_t got = fread(buf, 1, len, f);
+    { /* musica sustituta (music.c): que cancion lee el juego y por donde va */
+        void music_on_read(const char *path, uint32_t pos, uint32_t len);
+        music_on_read(host_files[mem_r32(file + 0x30) & 0xFFFF].path, pos, (uint32_t)got);
+    }
     for (size_t i = 0; i < got; i++) mem_w8(dst + (uint32_t)i, buf[i]);
     free(buf);
     mem_w32(file + 0x2C, pos + (uint32_t)got);

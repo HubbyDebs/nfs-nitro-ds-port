@@ -27,6 +27,7 @@ tarjeta gráfica.
 - **Menú de opciones** al arrancar, con perfiles Original, Recomendada y Máxima.
 
 - **Sonido**: secuencias, efectos y música en streaming, como el ARM7 de la consola.
+- **Música en alta calidad** con tus propios archivos de las canciones: ver [`GUIA_MUSICA.md`](GUIA_MUSICA.md).
 - Los coches lejanos se dibujan con el modelo de carrera en vez de los modelos simplificados de la DS.
 
 Lo que queda está en [`PROGRESS.md`](PROGRESS.md), sección "PENDIENTE / NO PERFECTO".

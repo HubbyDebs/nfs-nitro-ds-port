@@ -627,3 +627,19 @@ cielo raro. Captura `Capturaug 2.PNG`.
 - Texturas del Dodge: con la huella calculada como el port (`tex_hash`) desde los NSBMD, la de detalles del Charger
   no está capturada (no usa versión de IA) y la del destello del Challenger ampliada se ve bien (un destello como
   el original). Lo raro eran los destellos de freno dibujados opacos: ya van como luz sumada.
+
+## Tercera ronda (2026-10-14)
+
+- **Pista blanca** (captura `bug.PNG`): NO es un fallo. Es la pista nevada (`Graphics/Tracks/ast`, con muñecos de
+  nieve, colisión de hielo y `ast_frozen.hzc`); su textura de suelo `snw_PNTBW` es casi blanca (media 246/255).
+  De paso, la tabla de texturas descodificadas (1.024 huecos, 32 intentos por textura) ya no puede devolver "sin
+  textura" al llenarse: echa la que lleve más tiempo sin usarse (`used_at`). En una carrera se usan ~133 huecos,
+  así que solo pasaría tras muchas carreras seguidas. `NFS_TEXSTATS=1` escribe la ocupación.
+- **Trasera rara del coche blanco** (`trasera dodge.PNG`): es el **Camaro** (no el Dodge). Los modelos `lod1` de
+  los coches llevan dos piezas de luz (`blight` freno, `rlight` marcha atrás): un cuadrado con un halo blanco
+  (textura blanca con alfa) que tapa casi toda la trasera; el color lo pone el material (gris 205). El juego solo
+  las dibuja cuando el rival frena o va marcha atrás (VERIFICADO: 0 veces en 4.700 fotogramas de carrera normal,
+  con `NFS_DL_LOG=1`; el `lod0` del jugador no las tiene). Se suavizan: la de marcha atrás, más tenue
+  (0,35 en vez de 0,75) y las dos con el borde del halo difuminado (alfa al cuadrado). HIPÓTESIS: el juego cambia
+  su color al encenderlas (busca los materiales por nombre: cadenas `blight`/`rlight`/`hlight` en `0x02109458`,
+  usadas desde `FUN_0207cef8`); sin comprobar.

@@ -196,7 +196,7 @@ static const char *GPU_FS =
     "  }\n"
     "  if (a <= 0.0 || a <= u_alpha_ref) discard;\n"
     "  if (u_cutout != 0 && a < 0.5) discard;\n"
-    "  if (u_glow.r + u_glow.g + u_glow.b > 0.0) { o_col = vec4(t_lum(c) * u_glow * a, 0.0); return; }\n"
+    "  if (u_glow.r + u_glow.g + u_glow.b > 0.0) { o_col = vec4(t_lum(c) * u_glow * a * a, 0.0); return; }\n"
     "  if (u_pass == 1 && a < 0.999) discard;\n"
     "  if (u_pass == 2 && a >= 0.999) discard;\n"
     "  if (u_pass != 2) a = 1.0;\n"
@@ -709,7 +709,7 @@ static void gpu_render_frame(void) {
         if (p->glow) { /* luces del coche: luz sumada (roja de freno, blanca de marcha atras), sin tapar el piloto */
             gpu_set_poly_state(p, ti, ds, 2, &last_ls);
             if (p->glow == 1) glUniform3f(U("u_glow"), 1.15f, 0.14f, 0.08f);
-            else glUniform3f(U("u_glow"), 0.75f, 0.75f, 0.7f);
+            else glUniform3f(U("u_glow"), 0.35f, 0.35f, 0.32f); /* el halo cubre toda la trasera: tenue */
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
             glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);

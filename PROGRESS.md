@@ -184,8 +184,18 @@ Hecho en esta ronda (detalle en `notes/recomp.md`, "Ronda de arreglos", y en `no
 - Gráfica: regla de los translúcidos con el mismo identificador. 2D: ventana de sprites, mosaico, sprites de
   mapa de bits (sin cambios en las pantallas probadas: 0 píxeles distintos).
 
+Tercera ronda (2026-10-14; detalle en `notes/recomp.md` y `notes/sound.md`, "Tercera ronda"):
+- **Pista blanca**: es la pista nevada (no es un fallo). La tabla de texturas ya no se puede quedar sin sitio.
+- **Trasera del coche blanco**: era el Camaro; los halos de las luces de freno / marcha atrás tapaban la trasera.
+  Ahora son más tenues y con el borde difuminado.
+- **Ruido y tirones de la música**: el sonido se calculaba a 59,83 fotogramas/s con el port a 60: el búfer se
+  llenaba y se tiraban trozos. Arreglado (ritmo a 60 + ajuste automático de la salida, 48 kHz).
+- **Música en alta calidad**: la de la ROM es mono, 22,7 kHz y 4 bits. El port puede tocar los archivos del
+  usuario en su lugar, sincronizados con el juego (`GUIA_MUSICA.md`).
+
 Lo que queda:
-1. **Escuchar el sonido** (el usuario): volumen, tono, cortes. Sin hacer: efecto de reverberación por captura,
+1. **Escuchar el sonido** (el usuario): volumen, tono, cortes, y la música sustituta con canciones de verdad
+   (probada solo con archivos hechos de la original). Sin hacer: efecto de reverberación por captura,
    barrido de tono (E3) y portamento.
 2. **Probar el resto del juego jugando** (otras pistas, modos, policía): con el guion automático solo se llega a la
    primera carrera.

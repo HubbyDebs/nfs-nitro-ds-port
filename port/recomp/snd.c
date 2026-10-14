@@ -7,7 +7,9 @@
  *    volumen (ataque, caida, sostenido, liberacion), panorama, tono, vibrato, bucles, llamadas y variables.
  *  - Canales sueltos que el juego maneja directamente (musica en "streaming"): PCM de 8 y 16 bits y ADPCM,
  *    cuadradas y ruido, con sus temporizadores, y alarmas que avisan al juego para que rellene el bufer.
- *  - Los 16 canales de la consola se mezclan a 32.728 Hz en estereo y salen por waveOut en otro hilo.
+ *  - Los 16 canales de la consola se mezclan a 48.000 Hz en estereo (la consola: 32.728 Hz) y salen por waveOut
+ *    en otro hilo, que ajusta un poco el ritmo para que no se vacie ni se llene el bufer (ver audio_thread).
+ *  - Musica sustituta (music.c): las canciones en la calidad de los archivos del usuario.
  *  - Zona compartida con el juego (orden 29): estado de reproductores y canales, variables y contadores.
  *
  * El formato de las ordenes y de los datos es el de la libreria SND del SDK (ver notes/sound.md).
@@ -22,7 +24,8 @@
 
 #include "sys.h"
 
-#define OUT_RATE 32728
+#define OUT_RATE 48000
+#define VBLANK_HZ 60.0 /* el port va a 60 fotogramas por segundo exactos (win.c); la consola, a 59,83 */
 #define SND_FRAMES_PER_SEC 192.0 /* el ARM7 procesa el sonido cada ~5,2 ms */
 #define ARM7_CLOCK 33513982.0
 #define CH_FREQ_BASE 16756991.0  /* frecuencia de un canal = esto / periodo */
@@ -612,6 +615,7 @@ static void wav_close(void) {
     wav = 0;
 }
 static double out_gain = 1.0;
+int music_mix(int fmt, double rate, double v, double step, int out_rate, double *l, double *r);
 
 static void mix(int frames) {
     for (int f = 0; f < frames; f++) {
@@ -628,10 +632,11 @@ static void mix(int frames) {
             if (c->seq) { vl = v * c->amp_l; vr = v * c->amp_r; vm = v * (c->amp_l + c->amp_r) * 0.5; }
             else {
                 static const int div[4] = {1, 2, 4, 16};
-                double amp = c->vol / 127.0 / div[c->shift & 3];
-                vl = v * amp * (127 - c->pan) / 127.0;
-                vr = v * amp * c->pan / 127.0;
-                vm = v * amp;
+                double amp = c->vol / 127.0 / div[c->shift & 3], sl = v, sr = v;
+                music_mix(c->fmt, CH_FREQ_BASE / c->period, v, step, OUT_RATE, &sl, &sr); /* la del usuario, si hay */
+                vl = sl * amp * (127 - c->pan) / 127.0;
+                vr = sr * amp * c->pan / 127.0;
+                vm = (sl + sr) * 0.5 * amp;
             }
             if (i == 1) c1 = vm;
             if (i == 3) c3 = vm;
@@ -682,8 +687,14 @@ static void mix(int frames) {
     }
 }
 
-#define WAVE_BUFS 4
-#define WAVE_LEN 1024
+/* El juego produce el sonido al ritmo de sus fotogramas (60 por segundo, los da el reloj del PC) y la tarjeta
+ * lo gasta al ritmo de su propio reloj: nunca coinciden del todo (y antes el sonido se calculaba para 59,83
+ * fotogramas por segundo: sobraba un 0,3 %). Con el bufer lleno se tiraban trozos y vacio se metian silencios:
+ * ruido y tirones. Ahora se lee el bufer un poco mas deprisa o mas despacio (hasta un 0,5 %, no se nota en el
+ * tono) para mantenerlo a medio llenar; si aun asi se vacia, el sonido se apaga suave en vez de cortarse. */
+#define WAVE_BUFS 6
+#define WAVE_LEN 512
+#define RING_TARGET (OUT_RATE / 12) /* ~83 ms en el bufer: margen para fotogramas lentos */
 static DWORD WINAPI audio_thread(void *arg) {
     (void)arg;
     WAVEFORMATEX wf = {WAVE_FORMAT_PCM, 2, OUT_RATE, OUT_RATE * 4, 4, 16, 0};
@@ -702,20 +713,48 @@ static DWORD WINAPI audio_thread(void *arg) {
         waveOutPrepareHeader(wo, &hdr[i], sizeof hdr[i]);
         hdr[i].dwFlags |= WHDR_DONE;
     }
+    double frac = 0, ratio = 1, last_l = 0, last_r = 0, fill_avg = RING_TARGET;
+    int started = 0;
     for (;;) {
         for (int i = 0; i < WAVE_BUFS; i++) {
             if (!(hdr[i].dwFlags & WHDR_DONE)) continue;
-            for (int k = 0; k < WAVE_LEN; k++) {
-                LONG r = ring_r;
-                if ((r & (RING - 1)) == (ring_w & (RING - 1))) { bufs[i][k * 2] = bufs[i][k * 2 + 1] = 0; continue; }
-                bufs[i][k * 2] = ring[(r & (RING - 1)) * 2];
-                bufs[i][k * 2 + 1] = ring[(r & (RING - 1)) * 2 + 1];
-                InterlockedExchange(&ring_r, (r + 1) & (RING - 1));
+            LONG fill = (ring_w - ring_r) & (RING - 1);
+            if (!started && fill < RING_TARGET) { /* al principio, esperar a tener margen */
+                memset(bufs[i], 0, sizeof bufs[i]);
+            } else {
+                started = 1;
+                fill_avg = fill_avg * 0.9 + fill * 0.1;
+                ratio = 1 + (fill_avg - RING_TARGET) / RING_TARGET * 0.005;
+                if (ratio < 0.995) ratio = 0.995;
+                if (ratio > 1.005) ratio = 1.005;
+                for (int k = 0; k < WAVE_LEN; k++) {
+                    LONG r = ring_r;
+                    LONG avail = (ring_w - r) & (RING - 1);
+                    double l, rr;
+                    if (avail >= 2) { /* interpolacion lineal entre las dos muestras siguientes */
+                        const int16_t *a = &ring[(r & (RING - 1)) * 2], *b = &ring[((r + 1) & (RING - 1)) * 2];
+                        l = a[0] + (b[0] - a[0]) * frac;
+                        rr = a[1] + (b[1] - a[1]) * frac;
+                        frac += ratio;
+                        int adv = (int)frac;
+                        if (adv > avail - 1) adv = avail - 1;
+                        frac -= adv;
+                        InterlockedExchange(&ring_r, (r + adv) & (RING - 1));
+                    } else { /* vacio: apagar suave */
+                        l = last_l * 0.995;
+                        rr = last_r * 0.995;
+                        started = avail > 0 || fabs(l) > 1 ? started : 0;
+                    }
+                    last_l = l;
+                    last_r = rr;
+                    bufs[i][k * 2] = (int16_t)l;
+                    bufs[i][k * 2 + 1] = (int16_t)rr;
+                }
             }
             hdr[i].dwFlags &= ~WHDR_DONE;
             waveOutWrite(wo, &hdr[i], sizeof hdr[i]);
         }
-        WaitForSingleObject(ev, 50);
+        WaitForSingleObject(ev, 20);
     }
     return 0;
 }
@@ -730,9 +769,12 @@ static void snd_init(void) {
     if (getenv("NFS_VOLUME")) out_gain = atoi(getenv("NFS_VOLUME")) / 100.0;
     if (out_on) CreateThread(0, 0, audio_thread, 0, 0, 0);
     if (getenv("NFS_WAV") && (wav = fopen(getenv("NFS_WAV"), "wb"))) {
-        static const uint8_t head[44] = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 2, 0,
-                                         0xD8, 0x7F, 0, 0, 0x60, 0xFF, 1, 0, 4, 0, 16, 0, 'd', 'a', 't', 'a', 0, 0, 0, 0};
-        fwrite(head, 1, 44, wav); /* 32.728 Hz, estereo, 16 bits */
+        uint8_t head[44] = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 2, 0,
+                            0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 16, 0, 'd', 'a', 't', 'a', 0, 0, 0, 0};
+        uint32_t rate = OUT_RATE, bps = OUT_RATE * 4;
+        memcpy(head + 24, &rate, 4);
+        memcpy(head + 28, &bps, 4);
+        fwrite(head, 1, 44, wav); /* estereo, 16 bits */
         atexit(wav_close);
     }
 }
@@ -759,10 +801,10 @@ static void update_shared(void) {
 void snd_vblank(void) {
     snd_init();
     static double frames_acc, samples_acc;
-    snd_time += 1.0 / 59.8261;
+    snd_time += 1.0 / VBLANK_HZ;
     alarms_run();
-    frames_acc += SND_FRAMES_PER_SEC / 59.8261;
-    samples_acc += OUT_RATE / 59.8261;
+    frames_acc += SND_FRAMES_PER_SEC / VBLANK_HZ;
+    samples_acc += OUT_RATE / VBLANK_HZ;
     while (frames_acc >= 1) {
         frames_acc -= 1;
         seq_frame();
@@ -871,6 +913,7 @@ void snd_command(uint32_t id, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
         c->vol = (a2 >> 24) & 0x7F;
         c->shift = (a2 >> 22) & 3;
         c->period = (a0 >> 16) & 0xFFFF;
+        if (getenv("NFS_MUS_LOG")) fprintf(stderr, "[canal] f%u %d fmt %d periodo %d datos %08x bucle %d+%d vol %d%c", g_frame, n, c->fmt, c->period, c->data, c->loop_start, c->loop_len, c->vol, 10);
         break;
     }
     case 15: case 16: { /* SETUP_CHANNEL_PSG / NOISE: HIPOTESIS del formato (el juego no las usa en lo visto) */

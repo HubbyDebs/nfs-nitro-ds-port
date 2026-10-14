@@ -240,6 +240,7 @@ static int current_light_state(void) {
  * (finish_polygons): asi la subdivision puede mirar que vertices comparten varios poligonos. */
 double perf_3d_ms; /* tiempo acumulado en montar y dibujar el 3D (lo lee win.c con NFS_PERF) */
 int perf_tex_flushes; /* veces que se han tirado las texturas descodificadas */
+int perf_tex_evicted; /* texturas viejas echadas de la tabla para hacer sitio */
 double perf_tex_ms;   /* tiempo descodificando texturas (NFS_SPIKES) */
 int perf_tex_decoded, perf_tex_disk;
 int perf_polys, perf_trans, perf_raw; /* poligonos del ultimo fotograma: dibujados, translucidos, enviados */ /* texturas descodificadas; archivos de texturas buscados en disco */
@@ -599,6 +600,7 @@ typedef struct TexImage {
     int has_alpha;            /* tiene texeles no opacos (recortes): no puede ir en la pasada de profundidad */
     int own_size;
     uint32_t decoded_at, checked_at; /* fotograma (de VRAM) en que se descodifico / se comprobo */
+    uint32_t used_at;         /* ultimo fotograma en que se uso (para hacer sitio cuando la tabla se llena) */
     uint32_t rng[8][2];       /* memoria de VRAM que lee (texeles, bloques 4x4, paleta) */
     int nranges;
     struct Repl *pending;     /* sustituta que se esta cargando */
@@ -968,9 +970,11 @@ static void decode_texture(TexImage *t, uint32_t tp, uint32_t pal) {
 static const TexImage *get_texture(uint32_t tp, uint32_t pal) {
     if (((tp >> 26) & 7) == 0) return 0;
     uint32_t key = (tp & 0x3FFFFFFFu) * 2654435761u + pal * 40503u;
+    TexImage *oldest = 0;
     for (int probe = 0; probe < 32; probe++) {
         TexImage *t = &tex_cache[(key + probe) % TEX_CACHE];
         if (t->stamp == tex_generation && t->tex == (tp & 0x3FFFFFFFu) && t->pal == pal) {
+            t->used_at = vram_epoch;
             if (t->checked_at < vram_last_write) { /* se ha escrito algo desde la ultima vez: mirar si le toca */
                 if (!texture_still_valid(t)) { decode_texture(t, tp, pal); return t; }
                 t->checked_at = vram_epoch;
@@ -978,9 +982,22 @@ static const TexImage *get_texture(uint32_t tp, uint32_t pal) {
             if (t->pending && t->pending->state == 2) { use_replacement(t, t->pending); t->pending = 0; }
             return t;
         }
-        if (t->stamp == tex_generation) continue; /* ocupada por otra textura */
+        if (t->stamp == tex_generation) { /* ocupada por otra textura */
+            if (!oldest || t->used_at < oldest->used_at) oldest = t;
+            continue;
+        }
         decode_texture(t, tp, pal);
+        t->used_at = vram_epoch;
         return t;
+    }
+    /* Sin sitio: antes se devolvia "sin textura" y el poligono salia blanco (la pista entera blanca tras un rato
+     * de juego, cuando la tabla se habia llenado de texturas de otras pistas y menus). Se reutiliza la que lleve
+     * mas tiempo sin usarse, si no se usa en este fotograma. */
+    if (oldest && oldest->used_at != vram_epoch) {
+        perf_tex_evicted++;
+        decode_texture(oldest, tp, pal);
+        oldest->used_at = vram_epoch;
+        return oldest;
     }
     return 0;
 }
@@ -1576,6 +1593,18 @@ static void render(void) {
         if (p->lit && poly_tex[i]) note_lit_texture(poly_tex[i]);
     }
     vram_epoch++; /* lo que el juego escriba a partir de ahora es posterior a estas texturas */
+    if (getenv("NFS_GLOW_LOG")) /* depuracion: luces de freno / marcha atras */
+        for (int i = 0; i < poly_count; i++)
+            if (polys[i].glow)
+                fprintf(stderr, "[luz] fotograma %u tipo %d alfa %d luz %d color %.2f %.2f %.2f%c", g_frame, polys[i].glow,
+                        (polys[i].attr >> 16) & 31, polys[i].lit, polys[i].v[0].r, polys[i].v[0].g, polys[i].v[0].b, 10);
+    if (getenv("NFS_TEXSTATS") && g_frame % 600 == 0) { /* depuracion: ocupacion de la tabla de texturas */
+        int used = 0, nulls = 0;
+        for (int i = 0; i < TEX_CACHE; i++) used += tex_cache[i].stamp == tex_generation;
+        for (int i = 0; i < poly_count; i++) nulls += !poly_tex[i] && ((polys[i].tex >> 26) & 7);
+        fprintf(stderr, "[texturas] fotograma %u: %d de %d ocupadas, %d echadas, %d poligonos sin su textura%c", g_frame, used,
+                TEX_CACHE, perf_tex_evicted, nulls, 10);
+    }
     gpu_t[4] += gpu_now() - tt0;
 
     if (getenv("NFS_SHADOW_LOG") && g_frame == (uint32_t)atoi(getenv("NFS_SHADOW_LOG"))) { /* depuracion */
@@ -1866,6 +1895,9 @@ static int have, need, packed_left;
 int gx_try_replace(uint64_t hash) {
     if (!gx_has_replacements() || cur_cmd || packed_left) return 0; /* solo entre ordenes completas */
     if (!polys) return 0;
+    static int dl_log = -1; /* depuracion: huellas de las listas que llegan */
+    if (dl_log < 0) dl_log = getenv("NFS_DL_LOG") != 0;
+    if (dl_log) fprintf(stderr, "[lista] %u %016llx%c", g_frame, (unsigned long long)hash, 10);
     for (int probe = 0; probe < mesh_slots; probe++) {
         Mesh *m = &meshes[(hash + probe) % (uint64_t)mesh_slots];
         if (!m->v) return 0;
