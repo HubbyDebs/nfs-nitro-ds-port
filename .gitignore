@@ -1,0 +1,12 @@
+# Entorno de Python
+.venv/
+__pycache__/
+# Nada que salga de la ROM: capturas, texturas, modelos, audio (van en carpetas fuera del proyecto)
+*.png
+*.PNG
+*.jpg
+*.bmp
+*.nds
+*.sav
+*.tex
+*.nmesh
