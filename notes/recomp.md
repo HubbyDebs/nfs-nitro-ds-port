@@ -624,3 +624,6 @@ cielo raro. Captura `Capturaug 2.PNG`.
 - **Cielo**: HIPÓTESIS más probable, el resplandor: un cielo claro y uniforme pasaba del umbral y soltaba un halo
   que se comía el horizonte. Ahora solo brilla lo que destaca sobre su bloque de 4x4 (umbral = máx(0,84, media +
   0,10)), en la gráfica y en software. Si el cielo sigue raro, probar F5 (niebla) y F8 (resplandor).
+- Texturas del Dodge: con la huella calculada como el port (`tex_hash`) desde los NSBMD, la de detalles del Charger
+  no está capturada (no usa versión de IA) y la del destello del Challenger ampliada se ve bien (un destello como
+  el original). Lo raro eran los destellos de freno dibujados opacos: ya van como luz sumada.

@@ -47,3 +47,17 @@ FALTA: que el usuario lo escuche y diga si suena bien (volumen, tono, cortes).
 
 Opciones: casilla "Sonido" del menú (`NFS_SOUND=0`), `NFS_VOLUME=0..100`, `NFS_SND_LOG=1` (órdenes y notas),
 `NFS_WAV=archivo.wav`, `NFS_SND_ONLY=seq|stream`.
+
+## Arreglos tras escucharlo el usuario (2026-10-14)
+
+- **Motor sin cambiar de tono**: cada efecto es una secuencia de una nota y fin; al terminar la partitura se
+  liberaba la pista y las órdenes del juego que cambian tono, volumen y pan de la pista (`TRACK_PARAM`, unas 100
+  por segundo en carrera) no la encontraban. Ahora la pista se queda (marcada como terminada) hasta que el
+  reproductor acaba de sonar. VERIFICADO: 3.998 de 4.000 órdenes aplicadas (antes se perdían).
+- **Décimas de dB** (ver `notes/recomp.md`, "Segunda ronda") y limitador suave.
+- **Captura y selector de salida**: en carrera y en pausa el juego graba la mezcla con las unidades de captura
+  (orden 17), la procesa en el ARM9 con sus alarmas y la reproduce con los canales 1 y 3, y el selector de salida
+  (orden 25: izquierda = canal 1, derecha = canal 3, los dos fuera de la mezcla) manda eso a los altavoces. Hecho
+  igual: la captura escribe la mezcla en el búfer después de que los canales 1 y 3 lean su muestra (van un búfer
+  por detrás, como en la consola). HIPÓTESIS de los bits de la orden 17 (unidad = bit 31, bucle = bit 29) por los
+  valores del juego. VERIFICADO que el sonido de carrera sigue llegando por ese camino (niveles normales).

@@ -10,8 +10,8 @@
  *  - Los 16 canales de la consola se mezclan a 32.728 Hz en estereo y salen por waveOut en otro hilo.
  *  - Zona compartida con el juego (orden 29): estado de reproductores y canales, variables y contadores.
  *
- * El formato de las ordenes y de los datos es el de la libreria SND del SDK (ver notes/sound.md). Lo que
- * no se hace: efectos con captura (reverberacion): el sonido sale sin ese efecto.
+ * El formato de las ordenes y de los datos es el de la libreria SND del SDK (ver notes/sound.md).
+ * Captura y selector de salida: el efecto que el juego aplica en carrera y en la pausa pasa por ahi.
  * NFS_SOUND=0 quita el sonido; NFS_VOLUME=0..100 (por defecto 100). */
 #include <math.h>
 #include <stdio.h>
@@ -85,6 +85,17 @@ typedef struct Channel {
 
 static Channel ch[16];
 static uint32_t locked_mask, capture_active;
+
+/* Captura y selector de salida (efecto de la consola): la unidad de captura 0 graba la mezcla izquierda y
+ * la 1 la derecha en un bufer de la memoria; el juego lo procesa (en la pausa, por ejemplo, lo amortigua) y
+ * los canales 1 y 3 lo reproducen; el selector decide que va a los altavoces. */
+typedef struct Capture {
+    uint32_t addr, len; /* bufer (PCM16) y su longitud en muestras */
+    int loop;
+    double pos;
+} Capture;
+static Capture cap[2];
+static int out_left, out_right, mix_ch1 = 1, mix_ch3 = 1; /* 0 mezcla, 1 canal 1, 2 canal 3, 3 canales 1+3 */
 static int master_volume = 127;
 static CRITICAL_SECTION snd_lock;
 
@@ -193,6 +204,8 @@ typedef struct Track {
     int stack[3], loop_count[3], sp;
     int cmp; /* resultado de la ultima comparacion (orden A2) */
     int tie_channel;
+    int ended;  /* la partitura de la pista termino; la pista sigue existiendo para sus notas y los
+                 * parametros que el juego le cambia (tono y volumen del motor) hasta que se pare el reproductor */
 } Track;
 
 typedef struct Player {
@@ -500,7 +513,13 @@ static void seq_frame(void) {
         if (pl->finishing) {
             int playing = 0;
             for (int c = 0; c < 16; c++) playing |= ch[c].active && ch[c].seq && ch[c].player == pi;
-            if (!playing) { pl->active = pl->prepared = pl->finishing = 0; }
+            if (!playing) { /* ya no suena nada: se liberan sus pistas */
+                for (int i = 0; i < 16; i++) {
+                    if (pl->track_no[i] >= 0) tracks[pl->track_no[i]].active = 0;
+                    pl->track_no[i] = -1;
+                }
+                pl->active = pl->prepared = pl->finishing = 0;
+            }
             continue;
         }
         while (pl->tempo_counter >= 240) {
@@ -508,8 +527,8 @@ static void seq_frame(void) {
             int alive = 0;
             for (int i = 0; i < 16; i++) {
                 int ti = pl->track_no[i];
-                if (ti < 0) continue;
-                if (!track_tick(pi, ti)) { tracks[ti].active = 0; pl->track_no[i] = -1; continue; }
+                if (ti < 0 || tracks[ti].ended) continue;
+                if (!track_tick(pi, ti)) { tracks[ti].ended = 1; continue; }
                 alive = 1;
             }
             /* notas: cuenta atras de su duracion */
@@ -596,27 +615,49 @@ static double out_gain = 1.0;
 
 static void mix(int frames) {
     for (int f = 0; f < frames; f++) {
-        double l = 0, r = 0;
+        double l = 0, r = 0, c1 = 0, c3 = 0;
         for (int i = 0; i < 16; i++) {
             Channel *c = &ch[i];
             if (!c->active || c->period <= 0) continue;
-            if (capture_active && (i == 1 || i == 3)) { /* repiten lo capturado (efecto): no se oye doble */
-                c->pos += CH_FREQ_BASE / c->period / OUT_RATE;
-                continue;
-            }
             double step = CH_FREQ_BASE / c->period / OUT_RATE;
             double v = channel_next(c, step);
             static int only = -1; /* NFS_SND_ONLY=seq|stream: depuracion, solo una clase de canales */
             if (only < 0) only = !getenv("NFS_SND_ONLY") ? 0 : getenv("NFS_SND_ONLY")[0] == 's' && getenv("NFS_SND_ONLY")[1] == 'e' ? 1 : 2;
             if ((only == 1 && !c->seq) || (only == 2 && c->seq)) continue;
-            if (c->seq) { l += v * c->amp_l; r += v * c->amp_r; }
+            double vl, vr, vm;
+            if (c->seq) { vl = v * c->amp_l; vr = v * c->amp_r; vm = v * (c->amp_l + c->amp_r) * 0.5; }
             else {
                 static const int div[4] = {1, 2, 4, 16};
                 double amp = c->vol / 127.0 / div[c->shift & 3];
-                l += v * amp * (127 - c->pan) / 127.0;
-                r += v * amp * c->pan / 127.0;
+                vl = v * amp * (127 - c->pan) / 127.0;
+                vr = v * amp * c->pan / 127.0;
+                vm = v * amp;
             }
+            if (i == 1) c1 = vm;
+            if (i == 3) c3 = vm;
+            if ((i == 1 && !mix_ch1) || (i == 3 && !mix_ch3)) continue; /* el selector los saca de la mezcla */
+            l += vl; r += vr;
         }
+        /* captura de la mezcla (despues de que los canales 1 y 3 hayan leido su muestra: van un bufer por detras) */
+        for (int k = 0; k < 2; k++) {
+            Capture *cp = &cap[k];
+            if (!(capture_active & (1u << k)) || !cp->len) continue;
+            int n = (int)cp->pos;
+            if (n >= (int)cp->len) {
+                if (!cp->loop) { capture_active &= ~(1u << k); continue; }
+                cp->pos -= cp->len * floor(cp->pos / cp->len);
+                n = (int)cp->pos;
+            }
+            double v = k ? r : l;
+            int iv = (int)(v * 32767);
+            mem_w16(cp->addr + n * 2, (uint16_t)(iv > 32767 ? 32767 : iv < -32768 ? -32768 : iv));
+            Channel *pc = &ch[k ? 3 : 1];
+            cp->pos += pc->period > 0 ? CH_FREQ_BASE / pc->period / OUT_RATE : 1.0;
+        }
+        /* selector de salida */
+        double ml = l, mr = r;
+        l = out_left == 0 ? ml : out_left == 1 ? c1 : out_left == 2 ? c3 : c1 + c3;
+        r = out_right == 0 ? mr : out_right == 1 ? c1 : out_right == 2 ? c3 : c1 + c3;
         double mv = master_volume / 127.0 * out_gain * 0.5;
         l *= mv; r *= mv;
         /* limitador suave: con musica, motores y efectos a la vez la suma pasaba de 1 y saturaba */
@@ -772,6 +813,12 @@ void snd_command(uint32_t id, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
         int pi = a0 & 0xFFFFFF;
         if (pi >= 16) break;
         int size = (a0 >> 24) & 0xFF;
+        static int found, lost;
+        int any = 0;
+        for (int i = 0; i < 16; i++) if ((a1 & (1u << i)) && players[pi].track_no[i] >= 0) any = 1;
+        if (any) found++; else lost++;
+        if (getenv("NFS_SND_LOG") && (found + lost) % 2000 == 0)
+            printf("[sonido] parametros de pista: %d aplicados, %d sin pista%c", found, lost, 10);
         for (int i = 0; i < 16; i++) {
             if (!(a1 & (1u << i)) || players[pi].track_no[i] < 0) continue;
             Track *t = &tracks[players[pi].track_no[i]];
@@ -796,7 +843,7 @@ void snd_command(uint32_t id, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
     case 11: if (a1 < 16) global_var[a1] = (int16_t)a2; break;                                    /* PLAYER_GLOBAL_VAR */
     case 12: { /* START_TIMER: canales, capturas, alarmas */
         for (int i = 0; i < 16; i++) if (a0 & (1u << i)) channel_start(&ch[i]);
-        if (a1) capture_active |= a1;
+        if (a1) { capture_active |= a1; for (int k = 0; k < 2; k++) if (a1 & (1u << k)) cap[k].pos = 0; }
         for (int i = 0; i < 8; i++)
             if ((a2 & (1u << i)) && alarms[i].armed) { alarms[i].active = 1; alarms[i].next = snd_time + alarms[i].next; }
         break;
@@ -839,7 +886,21 @@ void snd_command(uint32_t id, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
         c->pan = (a3 >> 16) & 0x7F;
         break;
     }
-    case 17: break; /* SETUP_CAPTURE: el efecto no se hace */
+    case 17: { /* SETUP_CAPTURE: bufer, longitud (palabras), y en arg2: unidad (bit 31), bucle (bit 29). HIPOTESIS de
+                * los bits por los valores del juego (0x20000000 y 0xA0000000 para las unidades 0 y 1) */
+        int k = (a2 >> 31) & 1;
+        cap[k].addr = a0;
+        cap[k].len = (a1 & 0xFFFF) * 2;
+        cap[k].loop = (a2 >> 29) & 1;
+        cap[k].pos = 0;
+        break;
+    }
+    case 25: /* OUTPUT_SELECTOR: izquierda, derecha, canal 1 a la mezcla, canal 3 a la mezcla */
+        out_left = a0 & 3;
+        out_right = a1 & 3;
+        mix_ch1 = !(a2 & 1);
+        mix_ch3 = !(a3 & 1);
+        break;
     case 18: { /* SETUP_ALARM: numero, primer aviso y periodo (ticks del sistema), identificador */
         if (a0 >= 8) break;
         Alarm *al = &alarms[a0];
@@ -859,7 +920,7 @@ void snd_command(uint32_t id, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
     case 27: locked_mask &= ~a0; break; /* UNLOCK_CHANNEL */
     case 28: for (int i = 0; i < 16; i++) if ((a0 & (1u << i)) && !(locked_mask & (1u << i))) ch[i].active = 0; break;
     case 29: shared_work = a0; break; /* SHARED_WORK */
-    default: break; /* 22 surround, 24 master pan, 25 output selector, 30-33 invalidar / informacion: nada */
+    default: break; /* 22 surround, 24 master pan, 30-33 invalidar / informacion: nada */
     }
     (void)set_param;
 }
