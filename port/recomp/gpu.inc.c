@@ -46,7 +46,7 @@ int video_msaa(void);
     X(PFNGLACTIVETEXTUREPROC, glActiveTexture) X(PFNGLGENSAMPLERSPROC, glGenSamplers)                               \
     X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri) X(PFNGLSAMPLERPARAMETERFPROC, glSamplerParameterf)           \
     X(PFNGLBINDSAMPLERPROC, glBindSampler) X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)                       \
-    X(PFNGLBLENDEQUATIONSEPARATEPROC, glBlendEquationSeparate)
+    X(PFNGLBLENDEQUATIONSEPARATEPROC, glBlendEquationSeparate) X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)
 
 #define GL_DECLARE(type, name) static type p_##name;
 GL_LIST(GL_DECLARE)
@@ -92,6 +92,7 @@ GL_LIST(GL_DECLARE)
 #define glBindSampler p_glBindSampler
 #define glBlendFuncSeparate p_glBlendFuncSeparate
 #define glBlendEquationSeparate p_glBlendEquationSeparate
+#define glGenerateMipmap p_glGenerateMipmap
 
 #ifndef GL_TEXTURE_MAX_ANISOTROPY
 #define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
@@ -100,6 +101,9 @@ GL_LIST(GL_DECLARE)
 static int gpu_state = 0; /* 0 sin probar, 1 funcionando, -1 no disponible */
 int gpu_bloom_done;        /* este fotograma el resplandor ya lo hizo la grafica */
 static GLuint gpu_bl_prog[3], gpu_bl_fbo[2], gpu_bl_tex[2]; /* resplandor: brillo, difuminado, suma */
+static GLuint gpu_comp_prog, gpu_scr_tex[2][4]; /* mezcla final con el 2D y texturas de sus capas */
+static HDC gpu_win_dc;
+extern int win_gpu_present;
 static int gpu_bl_w, gpu_bl_h;
 static HDC gpu_dc;
 static HGLRC gpu_ctx;
@@ -240,6 +244,40 @@ static const char *GPU_ADD_FS =
     "in vec2 v_p; out vec4 o; uniform sampler2D u_src;\n"
     "void main() { o = vec4(texture(u_src, v_p).rgb * 0.7, 0.0); }\n";
 
+/* Mezcla final de una pantalla: las capas 2D (juntadas por video.c a 256x192) con el 3D a alta
+ * resolucion, con las mismas reglas que upscale_row/over_3d/over_front de video.c, y el brillo maestro */
+static const char *GPU_COMP_FS =
+    "#version 330 core\n"
+    "in vec2 v_p; out vec4 o;\n"
+    "uniform sampler2D t_back; uniform sampler2D t_front; uniform sampler2D t_raw; uniform sampler2D t_ids; uniform sampler2D t_3d;\n"
+    "uniform int u_use3d; uniform int u_fx3d; uniform int u_cnt; uniform float u_eva; uniform float u_evb;\n"
+    "uniform int u_bmode; uniform float u_bfac;\n"
+    "vec3 fade(vec3 c, int fx) { if (fx > 0) return c + (1.0 - c) * float(fx) / 16.0; if (fx < 0) return c + c * float(fx) / 16.0; return c; }\n"
+    "bool second(int layer) { return ((u_cnt >> (8 + layer)) & 1) != 0; }\n"
+    "void main() {\n"
+    "  vec2 uv = vec2(v_p.x, 1.0 - v_p.y);\n"
+    "  ivec2 p = clamp(ivec2(uv * vec2(256.0, 192.0)), ivec2(0), ivec2(255, 191));\n"
+    "  vec3 b = texelFetch(t_back, p, 0).rgb;\n"
+    "  vec4 id = texelFetch(t_ids, p, 0) * 255.0;\n"
+    "  int bid = int(id.r + 0.5), fid = int(id.g + 0.5); bool pend = id.b > 0.5;\n"
+    "  vec3 f = texelFetch(t_front, p, 0).rgb, raw = texelFetch(t_raw, p, 0).rgb;\n"
+    "  vec3 c;\n"
+    "  if (fid != 255 && !pend) c = f;\n"
+    "  else {\n"
+    "    vec4 g = u_use3d != 0 ? texture(t_3d, v_p) : vec4(0.0);\n"
+    "    if (g.a > 0.002) {\n"
+    "      c = g.rgb / g.a;\n"
+    "      if (u_fx3d != 0) c = fade(c, u_fx3d);\n"
+    "      if (g.a < 0.998 && second(bid)) c = c * g.a + b * (1.0 - g.a);\n"
+    "      if (fid != 255) c = (pend && second(0)) ? min((raw * u_eva + c * u_evb) / 16.0, vec3(1.0)) : f;\n"
+    "    } else if (fid != 255) {\n"
+    "      c = (pend && second(bid)) ? min((raw * u_eva + b * u_evb) / 16.0, vec3(1.0)) : f;\n"
+    "    } else c = b;\n"
+    "  }\n"
+    "  if (u_bmode == 1) c = c + (1.0 - c) * u_bfac; else if (u_bmode == 2) c = c - c * u_bfac;\n"
+    "  o = vec4(c, 1.0);\n"
+    "}\n";
+
 static GLuint gpu_compile(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, 0);
@@ -360,6 +398,10 @@ static int gpu_init(void) {
         return 0;
     }
     GLuint fvs = gpu_compile(GL_VERTEX_SHADER, GPU_FULL_VS);
+    {
+        GLuint f = gpu_compile(GL_FRAGMENT_SHADER, GPU_COMP_FS);
+        if (!fvs || !f || !(gpu_comp_prog = gpu_link(fvs, f))) return 0;
+    }
     const char *bl_src[3] = {GPU_BRIGHT_FS, GPU_BLUR_FS, GPU_ADD_FS};
     for (int i = 0; i < 3; i++) {
         GLuint f = gpu_compile(GL_FRAGMENT_SHADER, bl_src[i]);
@@ -728,12 +770,15 @@ static void gpu_render_frame(void) {
         glDisable(GL_BLEND);
         gpu_bloom_done = 1;
     }
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, gpu_res_fbo[gpu_res_cur]);
-    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    glReadPixels(0, 0, gpu_w, gpu_h, GL_BGRA, GL_UNSIGNED_BYTE, gpu_read);
-    double t3 = gpu_now();
-    gpu_t[2] += t3 - t2;
-    pool_run(gpu_h, gpu_convert_row, 0); /* OpenGL empieza por abajo; ademas se deshace el premultiplicado */
+    double t3 = t2;
+    if (!win_gpu_present) { /* la mezcla con el 2D la hace el procesador: hay que traer la imagen */
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, gpu_res_fbo[gpu_res_cur]);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(0, 0, gpu_w, gpu_h, GL_BGRA, GL_UNSIGNED_BYTE, gpu_read);
+        t3 = gpu_now();
+        gpu_t[2] += t3 - t2;
+    }
+    if (!win_gpu_present) pool_run(gpu_h, gpu_convert_row, 0); /* OpenGL empieza por abajo; se deshace el premultiplicado */
     QueryPerformanceCounter(&r1);
     QueryPerformanceFrequency(&rf);
     perf_gpu_read_ms += (double)(r1.QuadPart - r0.QuadPart) * 1000 / (double)rf.QuadPart;
@@ -766,5 +811,79 @@ static int gpu_render(void) {
     if (gpu_state < 0) return 0;
     wglMakeCurrent(gpu_dc, gpu_ctx);
     gpu_render_frame();
+    return 1;
+}
+
+/* Pinta las dos pantallas en la ventana del juego: mezcla del 2D con el 3D en la grafica. 0 = no se pudo
+ * (no hay grafica): entonces la ventana la pinta el procesador como antes. */
+int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int win_w, int win_h) {
+    if (gpu_state != 1 || !hwnd) return 0;
+    if (!gpu_win_dc) { /* la ventana del juego, con el mismo formato de pixel que el contexto */
+        HDC dc = GetDC((HWND)hwnd);
+        PIXELFORMATDESCRIPTOR pfd = {sizeof pfd, 1, PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER, PFD_TYPE_RGBA, 32};
+        if (!SetPixelFormat(dc, ChoosePixelFormat(dc, &pfd), &pfd) || !wglMakeCurrent(dc, gpu_ctx)) {
+            fprintf(stderr, "[gpu] no se puede pintar en la ventana: la pinta el procesador%c", 10);
+            gpu_state = -1;
+            return 0;
+        }
+        gpu_win_dc = dc;
+        gpu_dc = dc;
+        PFNWGLSWAPINTERVALEXTPROC swap = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+        if (swap) swap(0); /* el ritmo de 60 lo lleva win.c */
+        for (int k = 0; k < 2; k++)
+            for (int t = 0; t < 4; t++) {
+                glGenTextures(1, &gpu_scr_tex[k][t]);
+                glBindTexture(GL_TEXTURE_2D, gpu_scr_tex[k][t]);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 192, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            }
+        fprintf(stderr, "[gpu] la ventana la pinta la grafica%c", 10);
+    }
+    wglMakeCurrent(gpu_win_dc, gpu_ctx);
+    /* el 3D recien dibujado; si se reduce (resolucion interna mayor que la de la ventana), con reducciones */
+    GLuint t3d = gpu_res_tex[gpu_res_cur ^ 1];
+    glBindTexture(GL_TEXTURE_2D, t3d);
+    int reduce = gpu_w > 256 * top->s;
+    if (reduce) glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, reduce ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_MULTISAMPLE);
+    glColorMask(1, 1, 1, 1);
+    glViewport(0, 0, win_w, win_h);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(gpu_comp_prog);
+    static const char *names[5] = {"t_back", "t_front", "t_raw", "t_ids", "t_3d"};
+    for (int t = 0; t < 5; t++) glUniform1i(glGetUniformLocation(gpu_comp_prog, names[t]), t);
+    glBindVertexArray(gpu_vao);
+    const GpuScreen *scr[2] = {top, bottom};
+    for (int k = 0; k < 2; k++) {
+        const GpuScreen *g = scr[k];
+        const uint32_t *src[4] = {g->back, g->front, g->raw, g->ids};
+        for (int t = 0; t < 4; t++) {
+            glActiveTexture(GL_TEXTURE0 + t);
+            glBindSampler(t, 0);
+            glBindTexture(GL_TEXTURE_2D, gpu_scr_tex[k][t]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_BGRA, GL_UNSIGNED_BYTE, src[t]);
+        }
+        glActiveTexture(GL_TEXTURE4);
+        glBindSampler(4, 0);
+        glBindTexture(GL_TEXTURE_2D, t3d);
+        glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_use3d"), g->use3d && gpu_have_prev);
+        glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_fx3d"), g->fx3d);
+        glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_cnt"), g->cnt);
+        glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_eva"), (float)g->eva);
+        glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_evb"), (float)g->evb);
+        glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_bmode"), g->bright_factor ? g->bright_mode : 0);
+        glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_bfac"), g->bright_factor / 16.0f);
+        glViewport(g->x, win_h - g->y - 192 * g->s, 256 * g->s, 192 * g->s);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    glActiveTexture(GL_TEXTURE0);
+    SwapBuffers(gpu_win_dc);
     return 1;
 }

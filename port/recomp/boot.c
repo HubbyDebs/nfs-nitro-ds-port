@@ -45,6 +45,9 @@ static LONG CALLBACK on_crash(EXCEPTION_POINTERS *e) {
 int launcher_menu(void); /* menu.c */
 
 int main(int argc, char **argv) {
+    /* Que Windows no estire la ventana con la escala de pantalla (125 %, 150 %...): se ve borroso.
+     * Asi se pinta pixel a pixel y la ventana elige su tamano con la resolucion real. */
+    SetProcessDPIAware();
     /* Carpeta del juego: el argumento (si lo hay) manda; el menu la deja en NFS_ROM (y la recuerda) */
     if (argc >= 2) _putenv_s("NFS_ROM", argv[1]);
     /* Menu de opciones antes de empezar (no en las pruebas automaticas) */

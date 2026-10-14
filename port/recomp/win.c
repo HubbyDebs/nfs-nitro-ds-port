@@ -180,23 +180,25 @@ static void blit_screen(const uint32_t *src, int S, int dx, int dy, int ts) {
     pool_run(192 * ts, blit_row, &job);
 }
 
-static void compose(void) {
-    int S = internal_scale, small = win_scale / 2 > 0 ? win_scale / 2 : 1;
-    const uint32_t *top = frame, *bottom = frame + 256 * S * 192 * S;
-    if (layout == 0) {
-        blit_screen(top, S, 0, 0, win_scale);
-        blit_screen(bottom, S, 0, 192 * win_scale, win_scale);
-        touch_rect.x = 0; touch_rect.y = 192 * win_scale; touch_rect.s = win_scale;
-    } else if (layout == 1) {
-        blit_screen(top, S, 0, 0, win_scale);
-        blit_screen(bottom, S, 256 * win_scale, 0, win_scale);
-        touch_rect.x = 256 * win_scale; touch_rect.y = 0; touch_rect.s = win_scale;
-    } else {
-        blit_screen(top, S, 0, 0, win_scale);
-        blit_screen(bottom, S, 256 * win_scale, (192 * win_scale - 192 * small) / 2, small);
-        touch_rect.x = 256 * win_scale; touch_rect.y = (192 * win_scale - 192 * small) / 2; touch_rect.s = small;
-    }
+/* Donde va cada pantalla en la ventana segun la disposicion: [0] arriba, [1] tactil */
+static void screen_rects(int r[2][3]) {
+    int small = win_scale / 2 > 0 ? win_scale / 2 : 1;
+    r[0][0] = 0; r[0][1] = 0; r[0][2] = win_scale;
+    if (layout == 0) { r[1][0] = 0; r[1][1] = 192 * win_scale; r[1][2] = win_scale; }
+    else if (layout == 1) { r[1][0] = 256 * win_scale; r[1][1] = 0; r[1][2] = win_scale; }
+    else { r[1][0] = 256 * win_scale; r[1][1] = (192 * win_scale - 192 * small) / 2; r[1][2] = small; }
+    touch_rect.x = r[1][0]; touch_rect.y = r[1][1]; touch_rect.s = r[1][2];
 }
+
+static void compose(void) {
+    int S = internal_scale, r[2][3];
+    screen_rects(r);
+    blit_screen(frame, S, r[0][0], r[0][1], r[0][2]);
+    blit_screen(frame + 256 * S * 192 * S, S, r[1][0], r[1][1], r[1][2]);
+}
+
+int win_gpu_present; /* la ventana la pinta la grafica (no hace falta la copia del procesador) */
+int video_gpu(void);
 
 static void resize_window(void) {
     layout_size(layout, win_scale, &present_w, &present_h);
@@ -240,6 +242,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_PAINT: {
+        if (win_gpu_present) { ValidateRect(h, 0); return 0; } /* la pinta OpenGL */
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
         BITMAPINFO bi = {{sizeof(BITMAPINFOHEADER), present_w, -present_h, 1, 32, BI_RGB}};
@@ -358,7 +361,14 @@ void win_frame(void) {
     LARGE_INTEGER p0, p1, p2;
     QueryPerformanceCounter(&p0);
     int shot = shot_every && g_frame >= shot_from && g_frame <= shot_to && g_frame % (uint32_t)shot_every == 0;
-    if (!headless || shot) video_render(frame);
+    if (!headless && !shot && video_gpu()) { /* con la grafica: ella mezcla el 2D con el 3D y pinta la ventana */
+        int r[2][3];
+        screen_rects(r);
+        win_gpu_present = video_present_gpu(r[0][0], r[0][1], r[0][2], r[1][0], r[1][1], r[1][2], window, present_w, present_h);
+    } else {
+        win_gpu_present = 0;
+    }
+    if ((!headless && !win_gpu_present) || shot) video_render(frame);
     if (shot) {
         char name[64];
         snprintf(name, sizeof name, "shot_%05u.png", g_frame);
@@ -367,14 +377,16 @@ void win_frame(void) {
     if (headless) return;
 
     QueryPerformanceCounter(&p1);
-    compose();
+    if (!win_gpu_present) compose();
     MSG msg;
     while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }
-    InvalidateRect(window, 0, FALSE);
-    UpdateWindow(window);
+    if (!win_gpu_present) {
+        InvalidateRect(window, 0, FALSE);
+        UpdateWindow(window);
+    }
 
     QueryPerformanceCounter(&p2);
     perf_2d += (double)(p1.QuadPart - p0.QuadPart) * 1000 / (double)freq.QuadPart;

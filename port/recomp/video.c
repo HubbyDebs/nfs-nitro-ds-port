@@ -424,10 +424,11 @@ static void fx_log(const Engine *e) { /* que efectos 2D pide el juego de verdad 
             winobj, bitmap, mosaic, 10);
 }
 
-static void render_engine(Engine *e, uint32_t *buf, int S) {
+/* Junta las capas 2D de un motor en back2d/front2d/... (a 256x192). Dice si el 3D va en medio. */
+static void build_engine(Engine *e, int *has_3d_out, int *fx_3d_out, BlendRegs *br_out) {
     uint32_t dispcnt = rd32(e->reg);
     fx_log(e);
-    int display = (dispcnt >> 16) & 3, total = W * S * H * S, ow = W * S;
+    int display = (dispcnt >> 16) & 3;
     int has_3d = 0, fx_3d = 0;
     BlendRegs br = blend_regs(e);
     memset(back_id, 5, sizeof back_id);
@@ -465,6 +466,15 @@ static void render_engine(Engine *e, uint32_t *buf, int S) {
             }
         }
     }
+    *has_3d_out = has_3d;
+    *fx_3d_out = fx_3d;
+    *br_out = br;
+}
+
+static void render_engine(Engine *e, uint32_t *buf, int S) {
+    int total = W * S * H * S, ow = W * S, has_3d, fx_3d;
+    BlendRegs br;
+    build_engine(e, &has_3d, &fx_3d, &br);
 
     /* Ampliacion a la resolucion interna, mezclando con el 3D si lo hay (por filas, en paralelo) */
     int gw, gh;
@@ -488,6 +498,38 @@ static void render_engine(Engine *e, uint32_t *buf, int S) {
             buf[i] = out;
         }
     }
+}
+
+/* Con la grafica: se juntan las capas 2D aqui (a 256x192) y la grafica las mezcla con el 3D, a la
+ * resolucion que toque, y las pinta en la ventana. Asi no hay que leer el 3D de vuelta. 0 = no se pudo. */
+static uint32_t scr_back[2][W * H], scr_front[2][W * H], scr_raw[2][W * H], scr_ids[2][W * H];
+
+static void pack_screen(int k, Engine *e, GpuScreen *g) {
+    int has_3d, fx_3d;
+    BlendRegs br;
+    build_engine(e, &has_3d, &fx_3d, &br);
+    memcpy(scr_back[k], back2d, sizeof back2d);
+    memcpy(scr_front[k], front2d, sizeof front2d);
+    memcpy(scr_raw[k], front_raw, sizeof front_raw);
+    for (int i = 0; i < W * H; i++) scr_ids[k][i] = back_id[i] | (front_id[i] << 8) | (front_pend[i] << 16) | 0xFF000000u;
+    uint32_t bright = rd16(e->reg + 0x6C);
+    g->back = scr_back[k]; g->front = scr_front[k]; g->raw = scr_raw[k]; g->ids = scr_ids[k];
+    g->use3d = has_3d; g->fx3d = fx_3d; g->cnt = (int)br.cnt; g->eva = br.eva; g->evb = br.evb;
+    g->bright_mode = bright >> 14; g->bright_factor = (bright & 31) > 16 ? 16 : (bright & 31);
+}
+
+int video_present_gpu(int top_x, int top_y, int top_s, int bot_x, int bot_y, int bot_s, void *hwnd, int win_w, int win_h) {
+    uint8_t *vram = io_mem(3), *pal = io_mem(2), *oam = io_mem(4);
+    Engine a = {io_mem(0), vram, vram + 0x400000, pal, pal + 0x200, oam, vram + 0x880000, 1};
+    Engine b = {io_mem(1), vram + 0x200000, vram + 0x600000, pal + 0x400, pal + 0x600, oam + 0x400, vram + 0x898000, 0};
+    int main_on_top = (io_reg(0x304) >> 15) & 1;
+    GpuScreen ga, gb;
+    pack_screen(0, &a, &ga);
+    pack_screen(1, &b, &gb);
+    GpuScreen *top = main_on_top ? &ga : &gb, *bot = main_on_top ? &gb : &ga;
+    top->x = top_x; top->y = top_y; top->s = top_s;
+    bot->x = bot_x; bot->y = bot_y; bot->s = bot_s;
+    return gpu_present(top, bot, hwnd, win_w, win_h);
 }
 
 /* Dibuja las dos pantallas en out: (256*S) x (384*S) pixeles, la de arriba primero. */
