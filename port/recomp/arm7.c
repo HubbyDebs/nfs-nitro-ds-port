@@ -27,6 +27,11 @@ static void reply(uint32_t tag, uint32_t data, int err) {
     if (io_reg(0x184) & 0x0400) io_raise_irq(IRQ_IPC_RECV);
 }
 
+/* Mensaje del ARM7 al juego por iniciativa propia (alarmas de sonido). Si la cola va llena, se pierde. */
+void arm7_send(uint32_t tag, uint32_t data) {
+    if (count < QUEUE - 8) reply(tag, data, 0);
+}
+
 int arm7_reply_pending(void) { return count > 0; }
 
 uint32_t arm7_reply_pop(void) {
@@ -108,15 +113,25 @@ void arm7_message(uint32_t word) {
         break;
     }
     case 7: { /* SOUND */
-        /* HIPOTESIS (libreria SND del SDK): el dato es la direccion de una lista de ordenes
-         * { siguiente, numero, 4 argumentos }. El ARM7 las ejecuta y suma 1 al contador de listas
-         * terminadas, que es el primer campo de la "zona compartida de sonido"; el juego da esa
-         * direccion con la orden 29. Aqui no se ejecuta ninguna orden (no hay sonido): solo se
-         * lleva el contador, para que el juego no se quede esperando. */
+        /* Libreria SND del SDK (VERIFICADO: la orden 29 da la zona compartida): el dato es la direccion
+         * de una lista de ordenes { siguiente, numero, 4 argumentos }. Se ejecutan (snd.c) y se suma 1
+         * al contador de listas terminadas, el primer campo de la zona compartida de sonido. */
         static uint32_t shared, lists;
         uint32_t cmd = data;
         for (int guard = 0; cmd >= 0x02000000u && cmd < 0x02400000u && guard < 512; guard++) {
             uint32_t id = mem_r32(cmd + 4);
+            if (getenv("NFS_SND_LOG")) {
+                static int counts[64], shown;
+                if (id < 64 && counts[id]++ < 6 && shown++ < 400)
+                    printf("[snd] fotograma %u orden %u: %08x %08x %08x %08x%c", g_frame, id, mem_r32(cmd + 8),
+                           mem_r32(cmd + 12), mem_r32(cmd + 16), mem_r32(cmd + 20), 10);
+                if (id < 64 && g_frame % 600 == 0 && !(counts[63]++ % 50)) {
+                    printf("[snd] cuenta:");
+                    for (int k = 0; k < 40; k++) if (counts[k]) printf(" %d:%d", k, counts[k]);
+                    printf("%c", 10);
+                }
+            }
+            snd_command(id, mem_r32(cmd + 8), mem_r32(cmd + 12), mem_r32(cmd + 16), mem_r32(cmd + 20));
             if (id == 29) {
                 shared = mem_r32(cmd + 8);
                 printf("[arm7] sonido: zona compartida en %08x%c", shared, 10);

@@ -50,7 +50,7 @@ SETJMP = ['0x02008504=rt_ctx_slot',  # OS_SaveContext
           '0x0202a2a4=rt_jmp_slot']  # setjmp de la libreria de C (lo usa Lua para sus errores)
 # Depuracion: funciones cuyas llamadas se imprimen (variable de entorno NFS_TRACE=0x...,0x...)
 TRACE = [int(x, 16) for x in os.environ.get('NFS_TRACE', '').split(',') if x]
-RUNTIME = ['rt.c', 'io.c', 'hle.c', 'threads.c', 'irq.c', 'arm7.c', 'interp.c', 'video.c', 'gx.c', 'win.c', 'pool.c', 'menu.c', 'boot.c']
+RUNTIME = ['rt.c', 'io.c', 'hle.c', 'threads.c', 'irq.c', 'arm7.c', 'interp.c', 'video.c', 'gx.c', 'win.c', 'pool.c', 'menu.c', 'snd.c', 'boot.c']
 
 
 def main():
@@ -110,7 +110,7 @@ def main():
 
     objs = sorted(glob.glob(os.path.join(args.build, '*.o')))
     exe = os.path.join(args.build, 'nfs_boot.exe')
-    subprocess.check_call([CLANG, '-o', exe] + objs + ['-lgdi32', '-luser32', '-lopengl32', '-lshell32', '-lole32', '-lm'])
+    subprocess.check_call([CLANG, '-o', exe] + objs + ['-lgdi32', '-luser32', '-lopengl32', '-lshell32', '-lole32', '-lwinmm', '-lm'])
     print(f"compilados {len(jobs)} archivos, enlazado {exe} en {time.time() - t0:.0f} s")
 
 

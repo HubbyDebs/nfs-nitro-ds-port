@@ -56,6 +56,7 @@ static Combo combos[] = {
 };
 
 static Check checks[] = {
+    {"NFS_SOUND", L"Sonido", 1, 0},
     {"NFS_GPU", L"Dibujar el 3D con la tarjeta gráfica (si falla, se usa el procesador)", 1, 0},
     {"NFS_FILTER", L"Texturas suavizadas (filtro bilineal)", 1, 0},
     {"NFS_TEXPACK", L"Texturas ampliadas con IA", 1, 0},
@@ -80,14 +81,14 @@ static Check checks[] = {
  * consola tambien las tiene. */
 typedef struct Preset {
     const wchar_t *name;
-    int combo[6], check[10];
+    int combo[6], check[11];
 } Preset;
 
 static const Preset presets[] = {
-    {L"Personalizada", {-1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
-    {L"Original (como la consola, sin mejoras)", {-1, -1, 1, 1, 0, 0}, {-1, 0, 0, 0, 1, 1, 0, 0, 0, -1}},
-    {L"Recomendada", {-1, -1, 0, 0, 1, 2}, {1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
-    {L"Máxima potencia gráfica (puede ir lento)", {-1, -1, 6, 0, 2, 3}, {1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
+    {L"Personalizada", {-1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+    {L"Original (como la consola, sin mejoras)", {-1, -1, 1, 1, 0, 0}, {-1, -1, 0, 0, 0, 1, 1, 0, 0, 0, -1}},
+    {L"Recomendada", {-1, -1, 0, 0, 1, 2}, {-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
+    {L"Máxima potencia gráfica (puede ir lento)", {-1, -1, 6, 0, 2, 3}, {-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
 };
 #define N_PRESETS (int)(sizeof presets / sizeof presets[0])
 static HWND preset_ctl;

@@ -44,6 +44,7 @@ static void advance_time(void) {
         tick_in_frame = 0;
         io_set_vblank(0, 0);
         g_frame++;
+        snd_vblank(); /* sonido: secuencias, alarmas y mezcla de este fotograma */
         if (g_frame % 100 == 0) fprintf(stderr, "[tiempo] fotograma %u%c", g_frame, 10);
         if (!frame_limit) {
             const char *e = getenv("NFS_FRAMES");

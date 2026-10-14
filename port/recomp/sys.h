@@ -48,6 +48,10 @@ uint32_t arm7_reply_pop(void);
 
 #define IRQ_IPC_RECV 0x00040000u
 
+/* snd.c: sonido */
+void snd_command(uint32_t id, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3);
+void snd_vblank(void);
+
 /* interp.c: interprete de reserva para codigo sin traducir */
 void interp_run(Cpu *c, uint32_t target);
 
