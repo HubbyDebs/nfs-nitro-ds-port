@@ -585,3 +585,22 @@ la imagen de vuelta). Con eso x8 debería ir a 60.
 
 Menú: casilla "Dibujar el 3D con la tarjeta gráfica", desplegable "Suavizado de bordes (gráfica)" (No/x2/x4/x8),
 resoluciones x6 y x8; "Máxima" = x6 + MSAA x8 + subdivisión 2; "Original" quita el MSAA.
+
+## Ronda de arreglos (2026-10-14) — VERIFICADO salvo donde se dice
+
+- **Coches lejanos**: `tools/models/upgrade_lods.py`. Las piezas de `lod2`/`lod3` (y `wheel_lod2/3`) de cada coche
+  se sustituyen por las de `lod1` con el mismo material (VERIFICADO: comparten textura y nombres de material en el
+  Focus). Se escriben como `.nmesh` en `reemplazos\`. Si dos coches tienen la misma pieza lejana con distinto
+  sustituto, no se toca. VERIFICADO con `NFS_GPU_LOG` que se sustituyen en carrera.
+- **Carpeta del juego en el menú** (`menu.c`, `NFS_ROM` en `opciones.ini`), rutas por defecto en `%USERPROFILE%`.
+- **Presentación en la gráfica** (`gpu_present` en `gpu.inc.c`, `video_present_gpu` en `video.c`): `video.c`
+  junta las capas 2D de cada motor a 256x192 (`build_engine`) y las sube como texturas; un sombreador repite las
+  reglas de `upscale_row` (capas delante/detrás del 3D, mezclas pendientes, alfa del 3D, brillo de capa y brillo
+  maestro) y pinta cada pantalla en su rectángulo de la ventana; `SwapBuffers`. Sin lectura de vuelta (salvo
+  capturas y pruebas sin ventana). `SetProcessDPIAware` en `boot.c`.
+- **Sonido**: ver `notes/sound.md`.
+- **Translúcidos con el mismo identificador** (gráfica): bit 6 de la plantilla, que se limpia al cambiar de
+  identificador. Misma diferencia con el software que antes en las capturas de prueba (no había solapes).
+- **2D**: ventana de sprites, mosaico de fondos de teselas y de sprites, sprites de mapa de bits. 0 píxeles
+  distintos en las 9 capturas de prueba (el juego no los usa ahí).
+

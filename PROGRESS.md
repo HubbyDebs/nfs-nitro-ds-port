@@ -166,33 +166,34 @@ que comparten dirección; hilos del sistema; el sonido vive en el ARM7; no exist
 - Propuesta: Fase 3 sin Blender (extractor que saque un coche a OBJ/glTF + PNG, comprobable con cualquier visor)
   o saltar a la Fase 4 (cómo dibuja el juego) para llegar antes a la decisión reescritura / emulación.
 
-## PENDIENTE / NO PERFECTO (resumen a 2026-10-14, para retomar)
+## PENDIENTE / NO PERFECTO (actualizado 2026-10-14, tras la ronda de arreglos)
 
-El juego es jugable en PC con gráficos mejorados (3D con la gráfica, menú de opciones, texturas IA, modelos
-nuevos). Lo que queda, de más a menos importante:
+Hecho en esta ronda (detalle en `notes/recomp.md`, "Ronda de arreglos", y en `notes/sound.md`):
+- **Coches lejanos** (captura `bug parte trasera coches.PNG`): el juego usa de lejos modelos muy simples
+  (`lod2`/`lod3`, ruedas de 20 triángulos). `tools/models/upgrade_lods.py` hace que se dibuje en su lugar el
+  modelo de carrera (`lod1`) de los 41 coches (292 piezas; 7 compartidas entre coches se dejan). VERIFICADO que
+  el juego las sustituye en carrera (6-9 piezas por fotograma); no se pudo hacer una captura con rivales cerca.
+- **Rutas fijas**: el menú pide la carpeta del juego ("Buscar…") y comprueba que tenga `arm9.bin`; texturas,
+  modelos, compilación y herramientas usan la carpeta del usuario (`%USERPROFILE%`); `build.py` encuentra solo
+  llvm-mingw.
+- **Rendimiento**: la gráfica mezcla el 2D con el 3D y pinta la ventana (sin leer la imagen de vuelta). Además la
+  ventana ya no la estira Windows (escala de pantalla 125 %): más nítida y más grande. En el PC del usuario:
+  ventana 1792x960, 3D 1280x960 + MSAA x4, 13,5-15 ms por fotograma (antes 12-15 ms a 1024x768).
+- **Sonido** (`snd.c`): secuencias SSEQ con sus instrumentos, canales PCM/ADPCM/cuadrada/ruido, música en
+  streaming con alarmas, salida por waveOut. Comprobado con grabaciones (no oído).
+- Gráfica: regla de los translúcidos con el mismo identificador. 2D: ventana de sprites, mosaico, sprites de
+  mapa de bits (sin cambios en las pantallas probadas: 0 píxeles distintos).
 
-1. **Coches lejanos con la parte trasera mal** (captura del usuario: `bug parte trasera coches.PNG`, en la
-   carpeta del proyecto). Rivales a media distancia: trasera con franjas oscuras y ruedas como bloques negros.
-   Sin investigar. HIPÓTESIS, por orden: (a) la subdivisión del port (F4) deforma los modelos de poco detalle
-   (`lod2`/`lod3`, los que se usan de lejos); (b) el barniz/reflejo (F7) en esos modelos; (c) algo de la gráfica
-   (F9). Primer paso: repetir la escena pulsando F4, F7 y F9 para ver cuál lo quita. Posible arreglo para (a):
-   no subdividir polígonos pequeños en pantalla o los de modelos `lod2`/`lod3`.
-2. **Sonido**: no hay nada (el ARM7 no contesta a las órdenes de sonido). Importante para el usuario.
-3. **Rendimiento en "Máxima"** (x6 + MSAA x8 + subdivisión 2): 18-22 ms, no llega a 60. Falta hacer en la
-   gráfica la mezcla con el 2D y la presentación en la ventana (ahora se lee la imagen de vuelta al procesador).
-4. **Reflejo de la pintura** (barniz, F7): solo refleja lo que está en pantalla; las caras que miran a la cámara
-   reflejan un cielo inventado. Supone la cámara casi horizontal (HIPÓTESIS).
-5. **Focus nuevo de prueba** (modelos sustitutos): se ve en carrera pero el paragolpes trasero parece arrugado
-   (efecto de la luz del juego sobre formas con más detalle). Casilla "Modelos 3D nuevos" para quitarlo.
-6. **Distancia de la niebla**: la escala de profundidad es HIPÓTESIS; falta comparar con capturas del juego real
-   (el usuario iba a dejarlas en `C:\Users\jj\nfs-nitro-ref`).
-7. **Gráfica, diferencias pequeñas con el software**: niebla por fragmento (no sobre el píxel final) y la regla de
-   "un translúcido no pinta dos veces el mismo píxel" solo para sombras.
-8. **Probar el resto del juego**: otras pistas y modos; 91 direcciones en `missing_calls.txt` y 2 trozos
-   interpretados en carrera sin fallos visibles. Capturar y ampliar texturas de pistas no visitadas
-   (`capturar_texturas.cmd` + `ampliar_texturas.cmd`).
-9. **Sin hacer en 2D** (el juego no lo usa en lo probado): ventana de sprites, mosaico, sprites de mapa de bits.
-10. **Fase 8 (empaquetado)**: un cargador que pida la ruta de la ROM; ahora está fija en `jugar.cmd` (`C:\nfs`).
-11. Fase 2 suelta: tabla virtual de `GameApp`, nombrar el SDK en masa en Ghidra.
+Lo que queda:
+1. **Escuchar el sonido** (el usuario): volumen, tono, cortes. Sin hacer: efecto de reverberación por captura,
+   barrido de tono (E3) y portamento.
+2. **Probar el resto del juego jugando** (otras pistas, modos, policía): con el guion automático solo se llega a la
+   primera carrera.
+3. **Distancia de la niebla** y **reflejo de la pintura** (supone la cámara casi horizontal): siguen siendo
+   HIPÓTESIS; hacen falta capturas del juego real para comparar.
+4. **Focus nuevo de prueba**: el paragolpes trasero se ve arrugado (es cómo ilumina el juego esa forma; casilla
+   "Modelos 3D nuevos" para quitarlo junto con los coches lejanos mejorados).
+5. Diferencia pequeña gráfica/software: la niebla se aplica a cada fragmento, no al píxel final.
+6. Fase 2 suelta: tabla virtual de `GameApp`, nombrar el SDK en masa en Ghidra.
 
 Guías para el usuario: `GUIA_TEXTURAS_BLENDER.md`, `GUIA_MODELOS_BLENDER.md`. Notas técnicas en `notes/`.

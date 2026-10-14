@@ -646,7 +646,7 @@ static void gpu_render_frame(void) {
     glUniform1fv(U("u_fog_table"), 32, ft);
     glUniform1i(U("u_maskonly"), 0);
 
-    int last_ls = -1, shadow_drawn = 0;
+    int last_ls = -1, shadow_drawn = 0, last_trans_id = -1;
     for (int b = 0; b < nb; b++) {
         const GpuBatch *bt = &batches[b];
         const Poly *p = &polys[bt->poly];
@@ -719,8 +719,18 @@ static void gpu_render_frame(void) {
             glDisable(GL_BLEND);
         }
         glDepthMask((p->attr & 0x800) ? 1 : 0);
-        glStencilMask(0);
-        glStencilFunc(GL_ALWAYS, 0, 0);
+        /* Regla de la consola: un translucido no pinta un pixel que ya pinto otro translucido con su mismo
+         * identificador (asi el humo o las particulas que se solapan no se acumulan). Se lleva con el bit 6
+         * de la plantilla, que se limpia cuando cambia el identificador. */
+        if (id != last_trans_id) {
+            glStencilMask(0x40);
+            glClearStencil(0);
+            glClear(GL_STENCIL_BUFFER_BIT);
+            last_trans_id = id;
+        }
+        glStencilFunc(GL_NOTEQUAL, 0x40, 0x40); /* pasa si el bit 6 esta a 0 */
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); /* y al pintar lo pone a 1 */
+        glStencilMask(0x40);
         glDrawArrays(GL_TRIANGLES, bt->first, bt->count);
     }
     glDisable(GL_BLEND);

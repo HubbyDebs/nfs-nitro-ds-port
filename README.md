@@ -26,8 +26,10 @@ tarjeta gráfica.
 - **Modelos 3D nuevos**: puedes cambiar un coche por uno hecho en Blender. Las guías explican cómo.
 - **Menú de opciones** al arrancar, con perfiles Original, Recomendada y Máxima.
 
-Falta el **sonido**. La lista completa de lo pendiente está en [`PROGRESS.md`](PROGRESS.md), sección
-"PENDIENTE / NO PERFECTO".
+- **Sonido**: secuencias, efectos y música en streaming, como el ARM7 de la consola.
+- Los coches lejanos se dibujan con el modelo de carrera en vez de los modelos simplificados de la DS.
+
+Lo que queda está en [`PROGRESS.md`](PROGRESS.md), sección "PENDIENTE / NO PERFECTO".
 
 ## Requisitos
 
@@ -37,7 +39,7 @@ Falta el **sonido**. La lista completa de lo pendiente está en [`PROGRESS.md`](
   ```
   ndstool -x nitro.nds -9 arm9.bin -7 arm7.bin -y9 y9.bin -y7 y7.bin -d data -y overlay -t banner.bin -h header.bin
   ```
-  Por defecto el port la busca en `C:\nfs`.
+  La carpeta se elige en el menú del principio (botón "Buscar…") y se recuerda.
 - Para compilar:
   - [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (clang para Windows).
   - Python 3 con `capstone`, `numpy` y `pillow`.
@@ -46,8 +48,9 @@ Falta el **sonido**. La lista completa de lo pendiente está en [`PROGRESS.md`](
   - Real-ESRGAN (`realesrgan-ncnn-vulkan`), para ampliar texturas.
   - Blender, para modelos nuevos.
 
-> Algunas rutas están fijas en el código y en los `.cmd`: `C:\nfs`, `C:\Users\jj\...` y la carpeta de
-> llvm-mingw dentro de `tools/recomp/build.py`. Si tu equipo es distinto, cámbialas ahí.
+> Por defecto todo va en tu carpeta de usuario: `%USERPROFILE%\nfs-nitro-build` (compilación),
+> `nfs-nitro-textures`, `nfs-nitro-models` y `nfs-nitro-tools\llvm-mingw-*` (el compilador, que `build.py` busca
+> solo; también vale `NFS_CLANG`).
 
 ## Compilar
 
@@ -66,8 +69,7 @@ La primera vez tarda unos minutos; después solo recompila lo que cambia.
 
 ## Jugar
 
-Ejecuta `jugar.cmd` (o `nfs_boot.exe C:\nfs` desde la carpeta de compilación). Primero sale el menú de
-opciones.
+Ejecuta `jugar.cmd`. Primero sale el menú: elige la carpeta del juego, la calidad gráfica y las opciones.
 
 | Tecla | Botón DS | | Tecla | Función |
 |---|---|---|---|---|
@@ -78,6 +80,8 @@ opciones.
 | Intro | Start | | F5 / F6 | Niebla / sombras |
 | Retroceso | Select | | F7 / F8 | Barniz / resplandor |
 | Ratón | Pantalla táctil | | F9 | Gráfica o procesador |
+
+Para que los coches lejanos se vean con el modelo de carrera, una vez: `.venv\Scripts\python.exe tools\models\upgrade_lods.py`.
 
 Las opciones se guardan en `opciones.ini`, junto a la partida guardada (`nfs_nitro.sav`).
 

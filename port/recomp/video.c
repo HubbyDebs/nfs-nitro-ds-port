@@ -8,8 +8,8 @@
  * mapas de bits de 8 bits y de color directo), sprites normales (1D y 2D), prioridades,
  * sprites rotados/escalados, sprites semitransparentes, mezcla alfa y de brillo entre capas
  * (tambien con el 3D, usando su alfa por pixel), ventanas 0 y 1, brillo maestro, modo "pantalla
- * desde VRAM". Sin hacer (el juego no los usa en lo probado): ventana de sprites, mosaico,
- * sprites de mapa de bits, paletas extendidas de sprites.
+ * desde VRAM", ventana de sprites, mosaico (fondos de teselas y sprites), sprites de mapa de bits.
+ * Sin hacer: paletas extendidas de sprites, mosaico en fondos afines.
  *
  * La memoria de video se trata como un bloque plano por direccion (no se simula el reparto
  * de bancos de VRAM): fondos del motor A en 0x06000000, del B en 0x06200000, sprites de A
@@ -107,12 +107,20 @@ static uint8_t wmask[W * H];
 
 static int in_range(int v, int lo, int hi) { return lo <= hi ? (v >= lo && v < hi) : (v >= lo || v < hi); }
 
-static void build_windows(const Engine *e, uint32_t dispcnt) {
+static void draw_objs(Engine *e, int prio, uint32_t *buf, int win_only);
+
+static void build_windows(Engine *e, uint32_t dispcnt) {
     if (!(dispcnt & 0xE000)) { memset(wmask, 0x3F, sizeof wmask); return; }
     uint32_t winin = rd16(e->reg + 0x48), winout = rd16(e->reg + 0x4A);
+    int objwin = (dispcnt & 0x8000) && (dispcnt & 0x1000);
+    if (objwin) { /* ventana de sprites: los pixeles de los sprites en modo "ventana" */
+        memset(layer, 0, sizeof layer);
+        draw_objs(e, 0, layer, 1);
+    }
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++) {
-            uint8_t m = winout & 0x3F; /* fuera de todas (la ventana de sprites no se usa: sin hacer) */
+            uint8_t m = winout & 0x3F; /* fuera de todas */
+            if (objwin && (layer[y * W + x] >> 24)) m = (winout >> 8) & 0x3F; /* dentro de la de sprites */
             for (int n = 1; n >= 0; n--) { /* la 0 tiene prioridad sobre la 1 */
                 if (!(dispcnt & (0x2000u << n))) continue;
                 uint32_t h = rd16(e->reg + 0x40 + n * 2), v = rd16(e->reg + 0x44 + n * 2);
@@ -159,6 +167,7 @@ static void draw_text_bg(Engine *e, int n, uint32_t *line_buf) {
     int bpp8 = (cnt >> 7) & 1, size = (cnt >> 14) & 3;
     int map_w = (size & 1) ? 512 : 256, map_h = (size & 2) ? 512 : 256;
     uint32_t hofs = rd16(e->reg + 0x10 + n * 4) & 0x1FF, vofs = rd16(e->reg + 0x12 + n * 4) & 0x1FF;
+    int mh = (cnt & 0x40) ? (int)(rd16(e->reg + 0x4C) & 15) + 1 : 1, mv = (cnt & 0x40) ? (int)((rd16(e->reg + 0x4C) >> 4) & 15) + 1 : 1; /* mosaico */
     /* Con paletas extendidas (DISPCNT bit 30) los fondos de 256 colores usan su ranura: la del
      * numero de fondo, o esa + 2 para BG0/BG1 si lo pide el bit 13 de su registro. */
     int ext = bpp8 && (dispcnt & 0x40000000u);
@@ -166,9 +175,9 @@ static void draw_text_bg(Engine *e, int n, uint32_t *line_buf) {
     const uint8_t *pal8 = ext ? e->bg_extpal + slot * 0x2000 : e->bg_pal;
 
     for (int y = 0; y < H; y++) {
-        uint32_t py = (y + vofs) & (map_h - 1);
+        uint32_t py = (y - y % mv + vofs) & (map_h - 1);
         for (int x = 0; x < W; x++) {
-            uint32_t px = (x + hofs) & (map_w - 1);
+            uint32_t px = (x - x % mh + hofs) & (map_w - 1);
             /* los mapas grandes son varios bloques de 32x32 teselas seguidos */
             uint32_t block = 0;
             if (px >= 256) block += 1;
@@ -260,7 +269,8 @@ static void draw_bg(Engine *e, int n, uint32_t *buf) {
 }
 
 /* Sprites de una prioridad dada */
-static void draw_objs(Engine *e, int prio, uint32_t *buf) {
+/* win_only = 1: solo los sprites de "ventana" (modo 2), de cualquier prioridad, para la ventana de sprites */
+static void draw_objs(Engine *e, int prio, uint32_t *buf, int win_only) {
     static const int sizes[3][4][2] = {
         {{8, 8}, {16, 16}, {32, 32}, {64, 64}},
         {{16, 8}, {32, 8}, {32, 16}, {64, 32}},
@@ -274,9 +284,11 @@ static void draw_objs(Engine *e, int prio, uint32_t *buf) {
         uint32_t a0 = rd16(o), a1 = rd16(o + 2), a2 = rd16(o + 4);
         int affine = (a0 >> 8) & 1;
         if (!affine && (a0 & 0x200)) continue; /* oculto */
-        if ((int)((a2 >> 10) & 3) != prio) continue;
         int mode = (a0 >> 10) & 3, shape = a0 >> 14;
-        if (mode >= 2 || shape == 3) continue; /* ventana y mapa de bits: sin hacer (el juego no los usa) */
+        if (shape == 3 || (win_only ? mode != 2 : mode == 2)) continue;
+        if (!win_only && (int)((a2 >> 10) & 3) != prio) continue;
+        uint32_t mos = rd16(e->reg + 0x4C);
+        int mos_w = (a0 & 0x1000) ? (int)((mos >> 8) & 15) + 1 : 1, mos_h = (a0 & 0x1000) ? (int)((mos >> 12) & 15) + 1 : 1;
         int w = sizes[shape][a1 >> 14][0], h = sizes[shape][a1 >> 14][1];
         int x0 = a1 & 0x1FF, y0 = a0 & 0xFF;
         if (x0 >= 256) x0 -= 512;
@@ -297,16 +309,33 @@ static void draw_objs(Engine *e, int prio, uint32_t *buf) {
         for (int y = 0; y < bh; y++) {
             int sy = y0 + y;
             if (sy < 0 || sy >= H) continue;
-            int ty = vflip ? h - 1 - y : y;
+            int ty0 = vflip ? h - 1 - y : y;
             for (int x = 0; x < bw; x++) {
+                int ty = ty0;
                 int sx = x0 + x;
                 if (sx < 0 || sx >= W) continue;
                 int tx = hflip ? w - 1 - x : x;
+                int ty_px = ty;
                 if (affine) {
                     int rx = x - bw / 2, ry = y - bh / 2;
                     tx = ((pa * rx + pb * ry) >> 8) + w / 2;
-                    ty = ((pc * rx + pd * ry) >> 8) + h / 2;
-                    if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+                    ty_px = ((pc * rx + pd * ry) >> 8) + h / 2;
+                    if (tx < 0 || ty_px < 0 || tx >= w || ty_px >= h) continue;
+                }
+                ty = ty_px;
+                if (mos_w > 1) tx -= tx % mos_w; /* mosaico */
+                if (mos_h > 1) ty -= ty % mos_h;
+                if (mode == 3) { /* mapa de bits de color directo */
+                    uint32_t addr;
+                    if (dispcnt & 0x40) { /* 1D: bloques de 128 o 256 bytes */
+                        addr = tile * ((dispcnt & 0x400000) ? 256 : 128) + (ty * w + tx) * 2;
+                    } else { /* 2D: imagen de 128 o 256 pixeles de ancho */
+                        int bmw = (dispcnt & 0x20) ? 256 : 128, cols = bmw / 8;
+                        addr = ((tile / cols) * 8 * bmw + (tile % cols) * 8 + ty * bmw + tx) * 2;
+                    }
+                    uint32_t c = e->obj_vram[addr & 0x3FFFF] | (e->obj_vram[(addr + 1) & 0x3FFFF] << 8);
+                    if (c & 0x8000) buf[sy * W + sx] = color(c);
+                    continue;
                 }
                 uint32_t idx, addr;
                 if (map_1d) {
@@ -461,7 +490,7 @@ static void build_engine(Engine *e, int *has_3d_out, int *fx_3d_out, BlendRegs *
             }
             if (dispcnt & 0x1000) {
                 memset(layer, 0, sizeof layer);
-                draw_objs(e, prio, layer);
+                draw_objs(e, prio, layer, 0);
                 merge_layer(&br, 4, front);
             }
         }
