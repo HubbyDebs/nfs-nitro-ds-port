@@ -29,10 +29,10 @@ typedef struct GpuScreen {
     const uint32_t *back, *front, *raw; /* capas 2D juntadas (256x192): detras del 3D, delante, delante sin mezclar */
     const uint32_t *ids;                /* 256x192: capa de detras, capa de delante (0xFF ninguna), mezcla pendiente */
     int use3d, fx3d, cnt, eva, evb, bright_mode, bright_factor;
-    int x, y, s;                        /* donde va en la ventana (pixeles, desde arriba a la izquierda) y su escala */
+    int x, y, w, h;                     /* donde va en la ventana (pixeles, desde arriba a la izquierda); w = 0: no se pinta */
 } GpuScreen;
 int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int win_w, int win_h);
-int video_present_gpu(int top_x, int top_y, int top_s, int bot_x, int bot_y, int bot_s, void *hwnd, int win_w, int win_h);
+int video_present_gpu(const int top[4], const int bot[4], void *hwnd, int win_w, int win_h);
 
 /* win.c: ventana, teclado y raton */
 void win_frame(void);

@@ -81,6 +81,12 @@ Ejecuta `jugar.cmd`. Primero sale el menú: elige la carpeta del juego, la calid
 | Intro | Start | | F5 / F6 | Niebla / sombras |
 | Retroceso | Select | | F7 / F8 | Barniz / resplandor |
 | Ratón | Pantalla táctil | | F9 | Gráfica o procesador |
+| | | | F11 / Alt+Intro | Pantalla completa (Esc: ventana) |
+
+**Mando** (Xbox o compatible, XInput): gatillo derecho o A = acelerar / aceptar, gatillo izquierdo o B = frenar /
+atrás, RB = nitro (R), LB = freno de mano (L), X = Y, Y = X, Start, Back = Select, cruceta o palanca izquierda.
+**Pantalla completa**: casilla del menú o F11; con la disposición "Solo la pantalla del juego" la imagen ocupa
+todo el alto (1440x1080 en un monitor de 1920x1080; F1 cambia de disposición).
 
 Para que los coches se vean con el modelo de garaje (más detallado) en carrera y de lejos, una vez:
 `.venv\Scripts\python.exe tools\models\upgrade_lods.py` y luego `.venv\Scripts\python.exe tools\models\upgrade_cars.py`

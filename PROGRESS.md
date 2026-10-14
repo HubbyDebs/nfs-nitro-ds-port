@@ -198,6 +198,11 @@ Tercera ronda (2026-10-14; detalle en `notes/recomp.md` y `notes/sound.md`, "Ter
   `notes/model_format.md`.
 - **Calcomanías de los coches sin escalones**: la pintura (que el juego compone al jugar) se amplía x4 con bordes
   suaves en el port (`notes/model_format.md`).
+- **Pantalla completa** (casilla del menú, F11, Alt+Intro; Esc vuelve): las pantallas de la DS se amplían a
+  cualquier tamaño en 4:3 (antes solo múltiplos de 256x192); disposición nueva "solo la pantalla del juego".
+  Resolución interna automática en pantalla completa: x6 (1536x1152, reducida a 1440x1080). Sin probar en el
+  monitor (para no quitarle la pantalla al usuario); en ventana, VERIFICADO que sigue igual.
+- **Mando XInput** (Xbox y compatibles). Sin probar con un mando conectado.
 
 Lo que queda:
 1. **Escuchar el sonido** (el usuario): volumen, tono, cortes, y la música sustituta con canciones de verdad

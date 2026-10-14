@@ -878,7 +878,7 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
     /* el 3D recien dibujado; si se reduce (resolucion interna mayor que la de la ventana), con reducciones */
     GLuint t3d = gpu_res_tex[gpu_res_cur ^ 1];
     glBindTexture(GL_TEXTURE_2D, t3d);
-    int reduce = gpu_w > 256 * top->s;
+    int reduce = gpu_w > top->w || gpu_h / 2 > top->h;
     if (reduce) glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, reduce ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -897,6 +897,7 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
     const GpuScreen *scr[2] = {top, bottom};
     for (int k = 0; k < 2; k++) {
         const GpuScreen *g = scr[k];
+        if (g->w <= 0 || g->h <= 0) continue; /* pantalla oculta (disposicion "solo la del juego") */
         const uint32_t *src[4] = {g->back, g->front, g->raw, g->ids};
         for (int t = 0; t < 4; t++) {
             glActiveTexture(GL_TEXTURE0 + t);
@@ -914,7 +915,7 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
         glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_evb"), (float)g->evb);
         glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_bmode"), g->bright_factor ? g->bright_mode : 0);
         glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_bfac"), g->bright_factor / 16.0f);
-        glViewport(g->x, win_h - g->y - 192 * g->s, 256 * g->s, 192 * g->s);
+        glViewport(g->x, win_h - g->y - g->h, g->w, g->h);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
     glActiveTexture(GL_TEXTURE0);
