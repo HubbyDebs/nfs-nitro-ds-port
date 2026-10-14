@@ -432,14 +432,16 @@ static int gpu_init(void) {
                 glGenSamplers(1, &sm);
                 glSamplerParameteri(sm, GL_TEXTURE_WRAP_S, wrap[s]);
                 glSamplerParameteri(sm, GL_TEXTURE_WRAP_T, wrap[t]);
-                /* NFS_SHARP (por defecto): sin mipmaps, nitidas tambien de lejos (lo pidio el usuario; el suelo
-                 * lejano puede parpadear). Con mipmaps, de lejos se usan las reducciones (sin parpadeo). */
+                /* NFS_SHARP=1 (por defecto): nitidas tambien de lejos. Sin mipmaps el suelo lejano parpadeaba; ahora
+                 * con mipmaps, filtro anisotropico x16 (lo que mas emborronaba era el suelo visto de canto, y eso lo
+                 * arregla el anisotropico) y el nivel adelantado 0,75 hacia el mas nitido. NFS_SHARP=2: sin mipmaps
+                 * (lo de antes); NFS_SHARP=0: mipmaps normales (-0,4). */
                 int sharp = video_sharp();
                 glSamplerParameteri(sm, GL_TEXTURE_MIN_FILTER,
-                                    f ? (sharp ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR) : (sharp ? GL_NEAREST : GL_NEAREST_MIPMAP_NEAREST));
+                                    f ? (sharp == 2 ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR) : (sharp == 2 ? GL_NEAREST : GL_NEAREST_MIPMAP_NEAREST));
                 glSamplerParameteri(sm, GL_TEXTURE_MAG_FILTER, f ? GL_LINEAR : GL_NEAREST);
                 if (f) glSamplerParameterf(sm, GL_TEXTURE_MAX_ANISOTROPY, max_aniso > 16 ? 16 : max_aniso);
-                glSamplerParameterf(sm, GL_TEXTURE_LOD_BIAS, f ? -0.4f : 0.0f);
+                glSamplerParameterf(sm, GL_TEXTURE_LOD_BIAS, getenv("NFS_LODBIAS") ? (float)atof(getenv("NFS_LODBIAS")) : f ? (sharp ? -0.75f : -0.4f) : 0.0f);
                 gpu_samplers[f][s][t] = sm;
             }
     glGetError();
@@ -919,6 +921,27 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
     glActiveTexture(GL_TEXTURE0);
+    { /* NFS_WINSHOT_EVERY=n (NFS_WINSHOT_FROM / _TO): guarda lo que se pinta en la ventana, para comprobar el
+       * camino de la grafica (las capturas NFS_SHOT_* salen del dibujado por procesador) */
+        static int every = -1, from, to;
+        if (every < 0) {
+            every = getenv("NFS_WINSHOT_EVERY") ? atoi(getenv("NFS_WINSHOT_EVERY")) : 0;
+            from = getenv("NFS_WINSHOT_FROM") ? atoi(getenv("NFS_WINSHOT_FROM")) : 0;
+            to = getenv("NFS_WINSHOT_TO") ? atoi(getenv("NFS_WINSHOT_TO")) : 0x7FFFFFFF;
+        }
+        if (every > 0 && (int)g_frame >= from && (int)g_frame <= to && g_frame % (uint32_t)every == 0) {
+            uint32_t *px = malloc((size_t)win_w * win_h * 4), *fl = malloc((size_t)win_w * win_h * 4);
+            glReadBuffer(GL_BACK);
+            glReadPixels(0, 0, win_w, win_h, GL_BGRA, GL_UNSIGNED_BYTE, px);
+            for (int y = 0; y < win_h; y++) memcpy(fl + (size_t)y * win_w, px + (size_t)(win_h - 1 - y) * win_w, (size_t)win_w * 4);
+            char name[64];
+            snprintf(name, sizeof name, "win_%05u.png", g_frame);
+            void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
+            video_save_png(name, fl, win_w, win_h);
+            free(px);
+            free(fl);
+        }
+    }
     SwapBuffers(gpu_win_dc);
     return 1;
 }

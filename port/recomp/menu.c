@@ -10,6 +10,7 @@
 #include <string.h>
 #include <windows.h>
 #include <shlobj.h>
+#include "controls.h"
 
 #define INI_FILE "opciones.ini"
 #define MAX_ITEMS 10
@@ -68,7 +69,7 @@ static Check checks[] = {
     {"NFS_SHINY", L"Coches con barniz: reflejo del cielo y brillos (mejora del port)", 1, 0},
     {"NFS_BLOOM", L"Resplandor en las zonas muy brillantes (bloom)", 1, 0},
     {"NFS_MESHES", L"Modelos 3D nuevos (carpeta nfs-nitro-models\\reemplazos)", 1, 0},
-    {"NFS_SHARP", L"Texturas siempre nítidas, también de lejos (sin mipmaps; el suelo puede parpadear)", 1, 0},
+    {"NFS_SHARP", L"Texturas nítidas también de lejos (filtro anisotrópico x16)", 1, 0},
     {"NFS_TEXDUMP", L"Guardar las texturas nuevas para ampliarlas después", 0, 1},
 };
 
@@ -77,6 +78,11 @@ static Check checks[] = {
 #define ID_PLAY IDOK
 #define ID_QUIT IDCANCEL
 #define ID_PRESET 300
+#define ID_CONTROLS 302
+
+/* Controles (controls.h): tecla y mando de cada boton de la consola */
+static int ctl_key[DS_BUTTONS];
+static unsigned ctl_pad[DS_BUTTONS];
 
 /* Perfiles de calidad. Cada numero es la opcion elegida en el desplegable o la casilla, en el mismo
  * orden que combos[] y checks[]; -1 = no se toca (la disposicion y el tamano de la ventana no son
@@ -137,6 +143,15 @@ static void load_options(void) {
         const char *v = getenv(o->env) ? getenv(o->env) : o->only_when_on ? 0 : ini_value(lines, n, o->env);
         o->on = v ? atoi(v) != 0 : o->deflt;
     }
+    for (int b = 0; b < DS_BUTTONS; b++) {
+        char name[32];
+        snprintf(name, sizeof name, "NFS_KEY_%s", control_defs[b].env);
+        const char *v = getenv(name) ? getenv(name) : ini_value(lines, n, name);
+        ctl_key[b] = v ? (int)strtol(v, 0, 0) : control_defs[b].key;
+        snprintf(name, sizeof name, "NFS_PAD_%s", control_defs[b].env);
+        v = getenv(name) ? getenv(name) : ini_value(lines, n, name);
+        ctl_pad[b] = v ? (unsigned)strtoul(v, 0, 0) : control_defs[b].pad;
+    }
 }
 
 static void save_and_apply(void) {
@@ -154,6 +169,17 @@ static void save_and_apply(void) {
         Check *o = &checks[c];
         _putenv_s(o->env, o->on ? "1" : (o->only_when_on ? "" : "0"));
         if (f && !o->only_when_on) fprintf(f, "%s=%d\n", o->env, o->on);
+    }
+    for (int b = 0; b < DS_BUTTONS; b++) {
+        char name[32], v[32];
+        snprintf(name, sizeof name, "NFS_KEY_%s", control_defs[b].env);
+        snprintf(v, sizeof v, "0x%02X", ctl_key[b]);
+        _putenv_s(name, v);
+        if (f) fprintf(f, "%s=%s\n", name, v);
+        snprintf(name, sizeof name, "NFS_PAD_%s", control_defs[b].env);
+        snprintf(v, sizeof v, "0x%06X", ctl_pad[b]);
+        _putenv_s(name, v);
+        if (f) fprintf(f, "%s=%s\n", name, v);
     }
     if (f) fclose(f);
 }
@@ -232,6 +258,205 @@ static void apply_preset(int p) {
     show_values();
 }
 
+/* NFS_MENU_SNAPSHOT=prefijo (pruebas): el menu y la ventana de controles se dibujan fuera de la vista y se
+ * guardan como <prefijo>_menu.png y <prefijo>_controles.png, sin esperar al usuario */
+void video_save_png(const char *path, const unsigned int *pixels, int w, int h);
+static void snapshot(HWND h, const char *suffix) {
+    MSG m;
+    for (int i = 0; i < 20; i++) { /* que se termine de pintar */
+        while (PeekMessageW(&m, 0, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageW(&m); }
+        Sleep(10);
+    }
+    RECT r;
+    GetWindowRect(h, &r);
+    int w = r.right - r.left, hh = r.bottom - r.top;
+    HDC wdc = GetDC(h), mdc = CreateCompatibleDC(wdc);
+    BITMAPINFO bi = {{sizeof(BITMAPINFOHEADER), w, -hh, 1, 32, BI_RGB}};
+    void *bits;
+    HBITMAP bmp = CreateDIBSection(wdc, &bi, DIB_RGB_COLORS, &bits, 0, 0);
+    HGDIOBJ old = SelectObject(mdc, bmp);
+    PrintWindow(h, mdc, 2 /* PW_RENDERFULLCONTENT */);
+    char path[MAX_PATH];
+    snprintf(path, sizeof path, "%s_%s.png", getenv("NFS_MENU_SNAPSHOT"), suffix);
+    video_save_png(path, bits, w, hh);
+    SelectObject(mdc, old);
+    DeleteObject(bmp);
+    DeleteDC(mdc);
+    ReleaseDC(h, wdc);
+}
+
+/* ---- ventana "Controles" ----------------------------------------------------------------------- */
+static HWND ctl_key_btn[DS_BUTTONS], ctl_pad_btn[DS_BUTTONS];
+static int capture_kind, capture_btn; /* 0 nada, 1 esperando tecla, 2 esperando mando */
+static unsigned capture_prev;
+static int controls_done;
+
+static void key_name(int vk, wchar_t *out, int n) {
+    if (!vk) { wcsncpy(out, L"(ninguna)", n); return; }
+    switch (vk) { /* las que GetKeyNameText nombra mal o en ingles */
+    case VK_LEFT: wcsncpy(out, L"Flecha izquierda", n); return;
+    case VK_RIGHT: wcsncpy(out, L"Flecha derecha", n); return;
+    case VK_UP: wcsncpy(out, L"Flecha arriba", n); return;
+    case VK_DOWN: wcsncpy(out, L"Flecha abajo", n); return;
+    case VK_RETURN: wcsncpy(out, L"Intro", n); return;
+    case VK_BACK: wcsncpy(out, L"Retroceso", n); return;
+    case VK_SPACE: wcsncpy(out, L"Espacio", n); return;
+    case VK_SHIFT: case VK_LSHIFT: wcsncpy(out, L"Mayúsculas", n); return;
+    case VK_CONTROL: case VK_LCONTROL: wcsncpy(out, L"Control", n); return;
+    case VK_TAB: wcsncpy(out, L"Tabulador", n); return;
+    }
+    UINT sc = MapVirtualKeyW((UINT)vk, MAPVK_VK_TO_VSC);
+    LONG lp = (LONG)(sc << 16);
+    if (vk == VK_INSERT || vk == VK_DELETE || vk == VK_HOME || vk == VK_END || vk == VK_PRIOR || vk == VK_NEXT) lp |= 1 << 24;
+    if (!sc || !GetKeyNameTextW(lp, out, n)) _snwprintf(out, n, L"Tecla %d", vk);
+}
+
+static void pad_text(unsigned mask, wchar_t *out, int n) {
+    out[0] = 0;
+    if (!mask) { wcsncpy(out, L"(ninguno)", n); return; }
+    for (unsigned bit = 1; bit && bit <= PAD_LS_DOWN; bit <<= 1)
+        if (mask & bit) {
+            if (out[0]) wcsncat(out, L" o ", n - wcslen(out) - 1);
+            wcsncat(out, pad_name(bit), n - wcslen(out) - 1);
+        }
+}
+
+static void controls_show(void) {
+    wchar_t t[128];
+    for (int b = 0; b < DS_BUTTONS; b++) {
+        if (capture_kind == 1 && capture_btn == b) wcscpy(t, L"Pulsa una tecla… (Esc: cancelar)");
+        else key_name(ctl_key[b], t, 128);
+        SetWindowTextW(ctl_key_btn[b], t);
+        if (capture_kind == 2 && capture_btn == b) wcscpy(t, L"Pulsa en el mando… (Esc: cancelar)");
+        else pad_text(ctl_pad[b], t, 128);
+        SetWindowTextW(ctl_pad_btn[b], t);
+    }
+}
+
+static void capture_start(HWND h, int kind, int b) {
+    capture_kind = kind;
+    capture_btn = b;
+    capture_prev = kind == 2 ? pad_read_raw(0) : 0;
+    if (kind == 2) SetTimer(h, 1, 30, 0);
+    controls_show();
+}
+
+static void capture_end(HWND h) {
+    KillTimer(h, 1);
+    capture_kind = 0;
+    controls_show();
+}
+
+static LRESULT CALLBACK controls_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_COMMAND: {
+        int id = LOWORD(wp);
+        if (id >= 600 && id < 600 + DS_BUTTONS) capture_start(h, 1, id - 600);
+        else if (id >= 700 && id < 700 + DS_BUTTONS) capture_start(h, 2, id - 700);
+        else if (id == 800) { /* restablecer */
+            for (int b = 0; b < DS_BUTTONS; b++) { ctl_key[b] = control_defs[b].key; ctl_pad[b] = control_defs[b].pad; }
+            capture_end(h);
+        } else if (id == 801 || id == IDOK || id == IDCANCEL) DestroyWindow(h);
+        return 0;
+    }
+    case WM_TIMER: { /* esperando un control del mando: el primero que se pulse ahora */
+        int con;
+        unsigned now = pad_read_raw(&con), fresh = now & ~capture_prev;
+        capture_prev = now;
+        if (capture_kind == 2 && fresh) {
+            unsigned bit = fresh & (~fresh + 1);
+            for (int b = 0; b < DS_BUTTONS; b++) ctl_pad[b] &= ~bit; /* cada control para un solo boton */
+            ctl_pad[capture_btn] = bit;
+            capture_end(h);
+        }
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC:
+        SetBkMode((HDC)wp, TRANSPARENT);
+        return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY: KillTimer(h, 1); controls_done = 1; return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+static void controls_window(HWND parent) {
+    static int registered;
+    if (!registered) {
+        registered = 1;
+        WNDCLASSW wc = {0};
+        wc.lpfnWndProc = controls_proc;
+        wc.hInstance = GetModuleHandleW(0);
+        wc.lpszClassName = L"NfsNitroControles";
+        wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+        wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
+        RegisterClassW(&wc);
+    }
+    const int CW = 760, M = 20, LW = 200, KW = 230, row = 34;
+    int ch = 16 + 30 + 44 + 28 + DS_BUTTONS * row + 16 + 34 + 18;
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+    RECT r = {0, 0, CW, ch};
+    AdjustWindowRect(&r, style, FALSE);
+    RECT pr;
+    GetWindowRect(parent, &pr);
+    int ww = r.right - r.left, wh = r.bottom - r.top;
+    HWND h = CreateWindowExW(0, L"NfsNitroControles", L"Controles", style, pr.left + ((pr.right - pr.left) - ww) / 2,
+                             pr.top + 40, ww, wh, parent, 0, GetModuleHandleW(0), 0);
+    int y = 16;
+    add(h, L"STATIC", L"Controles", 0, M, y, CW - 2 * M, 30, 0, font_title);
+    y += 30;
+    add(h, L"STATIC", L"Haz clic en una casilla y pulsa la tecla o el control del mando que quieras para ese botón de la "
+                      L"consola. Las teclas F1-F11 y Esc están reservadas.", 0, M, y, CW - 2 * M, 40, 0, font_small);
+    y += 44;
+    add(h, L"STATIC", L"Botón de la consola", 0, M, y, LW, 24, 0, font_head);
+    add(h, L"STATIC", L"Teclado", 0, M + LW, y, KW, 24, 0, font_head);
+    add(h, L"STATIC", L"Mando", 0, M + LW + KW + 10, y, CW - 2 * M - LW - KW - 10, 24, 0, font_head);
+    y += 28;
+    for (int b = 0; b < DS_BUTTONS; b++) {
+        add(h, L"STATIC", control_defs[b].label, 0, M, y + 5, LW, 22, 0, font);
+        ctl_key_btn[b] = add(h, L"BUTTON", L"", WS_TABSTOP, M + LW, y, KW, 28, 600 + b, font);
+        ctl_pad_btn[b] = add(h, L"BUTTON", L"", WS_TABSTOP, M + LW + KW + 10, y, CW - 2 * M - LW - KW - 10, 28, 700 + b, font);
+        y += row;
+    }
+    y += 16;
+    add(h, L"BUTTON", L"Restablecer", WS_TABSTOP, M, y, 140, 34, 800, font);
+    add(h, L"BUTTON", L"Aceptar", BS_DEFPUSHBUTTON | WS_TABSTOP, CW - M - 140, y, 140, 34, 801, font);
+    capture_kind = 0;
+    controls_show();
+    if (getenv("NFS_MENU_SNAPSHOT")) { /* pruebas */
+        SetWindowLongW(h, GWL_EXSTYLE, GetWindowLongW(h, GWL_EXSTYLE) | WS_EX_LAYERED); SetLayeredWindowAttributes(h, 0, 1, LWA_ALPHA); /* transparente: no se ve */
+        ShowWindow(h, SW_SHOWNOACTIVATE);
+        snapshot(h, "controles");
+        capture_start(h, 1, 0); /* asi se ve esperando una tecla */
+        snapshot(h, "controles_esperando");
+        DestroyWindow(h);
+        return;
+    }
+    EnableWindow(parent, FALSE);
+    ShowWindow(h, SW_SHOW);
+    controls_done = 0;
+    MSG m;
+    while (!controls_done && GetMessageW(&m, 0, 0, 0) > 0) {
+        if (capture_kind && (m.message == WM_KEYDOWN || m.message == WM_SYSKEYDOWN)) { /* la tecla elegida */
+            int vk = (int)m.wParam;
+            if (vk == VK_ESCAPE) capture_end(h);
+            else if (capture_kind == 1 && !(vk >= VK_F1 && vk <= VK_F12) && vk != VK_MENU) {
+                for (int b = 0; b < DS_BUTTONS; b++)
+                    if (ctl_key[b] == vk) ctl_key[b] = 0; /* cada tecla para un solo boton */
+                ctl_key[capture_btn] = vk;
+                capture_end(h);
+            }
+            continue;
+        }
+        if (capture_kind && (m.message == WM_KEYUP || m.message == WM_CHAR || m.message == WM_SYSKEYUP)) continue;
+        if (IsDialogMessageW(h, &m)) continue;
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(parent, TRUE);
+    SetForegroundWindow(parent);
+}
+
 static LRESULT CALLBACK menu_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_COMMAND: {
@@ -263,6 +488,7 @@ static LRESULT CALLBACK menu_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             }
         }
         else if (id == ID_QUIT) { result = 0; DestroyWindow(h); }
+        else if (id == ID_CONTROLS) controls_window(h);
         else if (id == ID_PRESET && code == CBN_SELCHANGE) {
             int p = (int)SendMessageW(preset_ctl, CB_GETCURSEL, 0, 0);
             if (p > 0) apply_preset(p);
@@ -307,7 +533,7 @@ int launcher_menu(void) {
 
     const int CW = 600, M = 24, LW = 210, row = 36;
     int y = 18;
-    int ch = 18 + 34 + 30 + row + row + 14 + N_COMBOS * row + 34 + N_CHECKS * 28 + 16 + 40 + 20 + 34 + 20;
+    int ch = 18 + 34 + 30 + row + row + 14 + N_COMBOS * row + 34 + N_CHECKS * 28 + 16 + 58 + 20 + 34 + 20;
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     RECT r = {0, 0, CW, ch};
     AdjustWindowRect(&r, style, FALSE);
@@ -354,14 +580,23 @@ int launcher_menu(void) {
     y += 16;
     add(win, L"STATIC",
         L"Durante el juego también se pueden cambiar: F1 pantallas, F2 filtro, F3 luz por píxel, "
-        L"F4 subdivisión, F5 niebla, F6 sombras, F7 brillo, F8 resplandor, F9 gráfica/procesador.",
-        0, M, y, CW - 2 * M, 40, 0, font_small);
-    y += 40 + 20;
+        L"F4 subdivisión, F5 niebla, F6 sombras, F7 brillo, F8 resplandor, F9 gráfica/procesador, F11 pantalla completa.",
+        0, M, y, CW - 2 * M, 58, 0, font_small);
+    y += 58 + 20;
+    add(win, L"BUTTON", L"Controles…", WS_TABSTOP, M, y, 140, 34, ID_CONTROLS, font);
     add(win, L"BUTTON", L"Salir", WS_TABSTOP, CW - M - 120 - 10 - 140, y, 120, 34, ID_QUIT, font);
     HWND play = add(win, L"BUTTON", L"Jugar", BS_DEFPUSHBUTTON | WS_TABSTOP, CW - M - 140, y, 140, 34, ID_PLAY, font);
     show_values();
     SendMessageW(preset_ctl, CB_SETCURSEL, matching_preset(), 0);
 
+    if (getenv("NFS_MENU_SNAPSHOT")) { /* pruebas: fuera de la vista, captura y salir */
+        SetWindowLongW(win, GWL_EXSTYLE, GetWindowLongW(win, GWL_EXSTYLE) | WS_EX_LAYERED); SetLayeredWindowAttributes(win, 0, 1, LWA_ALPHA);
+        ShowWindow(win, SW_SHOWNOACTIVATE);
+        snapshot(win, "menu");
+        controls_window(win);
+        DestroyWindow(win);
+        return 0;
+    }
     ShowWindow(win, SW_SHOW);
     SetForegroundWindow(win);
     SetFocus(play);

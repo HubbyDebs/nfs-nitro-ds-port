@@ -1246,13 +1246,13 @@ static void draw_triangle(const Poly *p, const TexImage *ti, const Vtx *v0, cons
                 float tr, tg, tb, ta;
                 /* Nivel de reduccion: segun cuantos texeles de la imagen caben en este pixel */
                 int lv = 0;
-                if (ti->levels > 1 && !ds->sharp) {
+                if (ti->levels > 1 && ds->sharp != 2) {
                     float ux = fabsf((dsdx - fs * dwdx) * w), uy = fabsf((dsdy - fs * dwdy) * w);
                     float vx = fabsf((dtdx - ft * dwdx) * w), vy = fabsf((dtdy - ft * dwdy) * w);
                     float rho = ux > uy ? ux : uy;
                     if (vx > rho) rho = vx;
                     if (vy > rho) rho = vy;
-                    union { float f; uint32_t u; } bits = {rho * tex_k * 0.75f};
+                    union { float f; uint32_t u; } bits = {rho * tex_k * (ds->sharp ? 0.45f : 0.75f)}; /* nitidas: ~0,75 niveles antes */
                     lv = (int)((bits.u >> 23) & 255) - 127; /* parte entera de log2 */
                     if (lv < 0) lv = 0;
                     if (lv > ti->levels - 1) lv = ti->levels - 1;

@@ -5,7 +5,7 @@
  * Retroceso = Select. Raton con el boton izquierdo sobre la pantalla tactil = lapiz.
  * Mando (XInput: los de Xbox y compatibles): gatillo derecho o A = A (acelerar / aceptar), gatillo izquierdo
  * o B = B (frenar / atras), X = Y, Y = X, RB = R (nitro), LB = L (freno de mano), Start, Back = Select,
- * cruceta y palanca izquierda = cruceta.
+ * cruceta y palanca izquierda = cruceta. Teclas y mando se pueden cambiar en el menu ("Controles", controls.h).
  * F1 cambia la disposicion de las pantallas; F2 activa/desactiva el filtrado de texturas;
  * F3 la luz por pixel; F4 cambia la subdivision de los modelos iluminados (0, 1 o 2 niveles);
  * F5 la niebla; F6 las sombras; F7 el barniz de los coches; F8 el resplandor;
@@ -29,7 +29,8 @@
  *   NFS_GPU=0          dibujar el 3D por software en vez de con la tarjeta grafica
  *   NFS_MSAA=n         muestras de suavizado de bordes con la tarjeta grafica (por defecto 4)
  *   NFS_BLOOM=0        sin resplandor (bloom)
- *   NFS_SHARP=0        texturas con mipmaps (de lejos mas suaves, sin parpadeo); 1 = siempre nitidas
+ *   NFS_SHARP=n        texturas de lejos: 1 = nitidas sin parpadeo (anisotropico x16; por defecto),
+ *                      0 = mas suaves, 2 = sin reducciones (lo mas nitido, el suelo lejano parpadea)
  *   NFS_SHINY=0        coches sin barniz (reflejo del cielo, Fresnel y brillos de la pintura)
  *   NFS_SPIKES=ms      apunta los fotogramas que tarden mas de esos milisegundos (tirones)
  *   NFS_HEADLESS=1     sin ventana (para pruebas automaticas)
@@ -46,6 +47,7 @@
 #include <windows.h>
 
 #include "sys.h"
+#include "controls.h"
 
 void video_render(uint32_t *out);
 void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
@@ -76,7 +78,8 @@ static void configure(void) {
     shadows = env_int("NFS_SHADOWS", 1) != 0;
     shiny = env_int("NFS_SHINY", 1) != 0;
     bloom = env_int("NFS_BLOOM", 1) != 0;
-    sharp = env_int("NFS_SHARP", 1) != 0;
+    sharp = env_int("NFS_SHARP", 1);
+    if (sharp < 0 || sharp > 2) sharp = 1;
     gpu = env_int("NFS_GPU", 1) != 0;
     msaa = env_int("NFS_MSAA", 4);
     if (tess < 0) tess = 0;
@@ -253,7 +256,9 @@ static void resize_window(void) {
         memset(present, 0, sizeof(uint32_t) * present_w * present_h);
         if (!window) return;
         SetWindowLongA(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowPos(window, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, present_w, present_h, SWP_FRAMECHANGED);
+        int off = getenv("NFS_TEST_OFFSCREEN") != 0; /* pruebas: mismo tamano, fuera de la vista */
+        SetWindowPos(window, HWND_TOP, off ? -20000 : mi.rcMonitor.left, off ? -20000 : mi.rcMonitor.top, present_w, present_h,
+                     SWP_FRAMECHANGED | (off ? SWP_NOACTIVATE : 0));
         return;
     }
     layout_size(layout, win_scale, &present_w, &present_h);
@@ -397,6 +402,10 @@ static void init(void) {
     RECT r = {0, 0, present_w, present_h};
     DWORD style = fullscreen ? WS_POPUP : WIN_STYLE;
     AdjustWindowRect(&r, style, FALSE);
+    if (getenv("NFS_TEST_OFFSCREEN")) { /* pruebas: ventana fuera de la vista y sin barra de tareas (con NFS_WINSHOT_*) */
+        window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, "NfsNitroPort", "NFS Nitro (prueba)", style | WS_VISIBLE,
+                                 -20000, -20000, r.right - r.left, r.bottom - r.top, 0, 0, wc.hInstance, 0);
+    } else
     window = CreateWindowA("NfsNitroPort", "NFS Nitro (port)  -  F1 pantallas  F2 filtro  F3 luz por pixel  F4 subdivision  F5 niebla  F6 sombras  F7 brillo  F8 resplandor  F9 grafica/software  F11 pantalla completa", style | WS_VISIBLE,
                            fullscreen ? 0 : CW_USEDEFAULT, fullscreen ? 0 : CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, 0, 0, wc.hInstance, 0);
     if (fullscreen) resize_window(); /* al monitor donde ha quedado */
@@ -520,73 +529,46 @@ void win_save_screenshot(const char *path) {
 }
 
 /* ---- botones ------------------------------------------------------------------------------------- */
-static int key(int vk) { return !headless && window && GetForegroundWindow() == window && (GetAsyncKeyState(vk) & 0x8000); }
 
-/* Mando por XInput (la DLL se carga al vuelo: si no esta, no hay mando y ya) */
-typedef struct { WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } PadGamepad;
-typedef struct { DWORD packet; PadGamepad pad; } PadState;
-static uint32_t pad_buttons(void) { /* bits en el orden de KEYINPUT; 0x400 = X, 0x800 = Y de la consola */
-    static DWORD (WINAPI *get_state)(DWORD, PadState *);
-    static int tried;
-    static DWORD last_try;
-    if (!tried) {
-        tried = 1;
-        HMODULE dll = LoadLibraryA("xinput1_4.dll");
-        if (!dll) dll = LoadLibraryA("xinput9_1_0.dll");
-        if (dll) get_state = (DWORD (WINAPI *)(DWORD, PadState *))(void *)GetProcAddress(dll, "XInputGetState");
+/* Botones de la consola segun los controles elegidos en el menu (controls.h; NFS_KEY_<boton> y NFS_PAD_<boton>) */
+static int bind_key[DS_BUTTONS];
+static unsigned bind_pad[DS_BUTTONS];
+static uint32_t ds_buttons(void) { /* bit n = boton n de controls.h pulsado */
+    static int loaded;
+    if (!loaded) {
+        loaded = 1;
+        for (int b = 0; b < DS_BUTTONS; b++) {
+            char name[32];
+            snprintf(name, sizeof name, "NFS_KEY_%s", control_defs[b].env);
+            bind_key[b] = getenv(name) ? (int)strtol(getenv(name), 0, 0) : control_defs[b].key;
+            snprintf(name, sizeof name, "NFS_PAD_%s", control_defs[b].env);
+            bind_pad[b] = getenv(name) ? (unsigned)strtoul(getenv(name), 0, 0) : control_defs[b].pad;
+        }
     }
-    if (!get_state || headless || !window || GetForegroundWindow() != window) return 0;
-    static int connected = -1;
-    if (connected == 0 && GetTickCount() - last_try < 2000) return 0; /* sin mando: buscarlo cada 2 s (es lento) */
-    PadState st;
-    for (DWORD i = 0; i < 4; i++) {
-        if (get_state(i, &st) != 0) continue;
-        if (connected != 1) fprintf(stderr, "[mando] conectado (%lu)%c", (unsigned long)i, 10);
-        connected = 1;
-        const PadGamepad *g = &st.pad;
-        uint32_t b = 0;
-        if ((g->buttons & 0x1000) || g->rt > 60) b |= 0x001;  /* A o gatillo derecho -> A */
-        if ((g->buttons & 0x2000) || g->lt > 60) b |= 0x002;  /* B o gatillo izquierdo -> B */
-        if (g->buttons & 0x0020) b |= 0x004;                  /* Back -> Select */
-        if (g->buttons & 0x0010) b |= 0x008;                  /* Start */
-        if ((g->buttons & 0x0008) || g->lx > 12000) b |= 0x010;
-        if ((g->buttons & 0x0004) || g->lx < -12000) b |= 0x020;
-        if ((g->buttons & 0x0001) || g->ly > 12000) b |= 0x040;
-        if ((g->buttons & 0x0002) || g->ly < -12000) b |= 0x080;
-        if (g->buttons & 0x0200) b |= 0x100;                  /* RB -> R (nitro) */
-        if (g->buttons & 0x0100) b |= 0x200;                  /* LB -> L (freno de mano) */
-        if (g->buttons & 0x8000) b |= 0x400;                  /* Y -> X */
-        if (g->buttons & 0x4000) b |= 0x800;                  /* X -> Y */
-        return b;
-    }
-    if (connected == 1) fprintf(stderr, "[mando] desconectado%c", 10);
-    connected = 0;
-    last_try = GetTickCount();
-    return 0;
+    if (headless || !window || GetForegroundWindow() != window) return 0;
+    static int was_connected;
+    int connected;
+    unsigned pad = pad_read_raw(&connected);
+    if (connected != was_connected) fprintf(stderr, "[mando] %s%c", connected ? "conectado" : "desconectado", 10);
+    was_connected = connected;
+    uint32_t out = 0;
+    for (int b = 0; b < DS_BUTTONS; b++)
+        if ((bind_key[b] && (GetAsyncKeyState(bind_key[b]) & 0x8000)) || (pad & bind_pad[b])) out |= 1u << b;
+    return out;
 }
 
 /* Registro KEYINPUT (0x04000130): un bit a 0 = boton pulsado */
 uint32_t win_keys(void) {
     init();
-    uint32_t k = 0x3FF & ~(pad_buttons() & 0x3FF);
-    if (key('Z')) k &= ~0x001u;        /* A */
-    if (key('X')) k &= ~0x002u;        /* B */
-    if (key(VK_BACK)) k &= ~0x004u;    /* Select */
-    if (key(VK_RETURN)) k &= ~0x008u;  /* Start */
-    if (key(VK_RIGHT)) k &= ~0x010u;
-    if (key(VK_LEFT)) k &= ~0x020u;
-    if (key(VK_UP)) k &= ~0x040u;
-    if (key(VK_DOWN)) k &= ~0x080u;
-    if (key('W')) k &= ~0x100u;        /* R */
-    if (key('Q')) k &= ~0x200u;        /* L */
-    return k & ~(script_keys & 0x3FF);
+    uint32_t pressed = ds_buttons() | (script_keys & 0x3FF); /* bits 0-9 = orden de KEYINPUT */
+    return 0x3FF & ~pressed;
 }
 
 /* Botones que en la consola lee el ARM7: bit 0 = X, bit 1 = Y, bit 6 = lapiz levantado */
 uint32_t win_extra_keys(void) {
-    uint32_t k = 0x7F, pad = pad_buttons();
-    if (key('S') || (script_keys & 0x400) || (pad & 0x400)) k &= ~1u;
-    if (key('A') || (script_keys & 0x800) || (pad & 0x800)) k &= ~2u;
+    uint32_t k = 0x7F, b = ds_buttons() | script_keys;
+    if (b & (1u << DS_X)) k &= ~1u;
+    if (b & (1u << DS_Y)) k &= ~2u;
     if (touch_down) k &= ~0x40u;
     return k;
 }
