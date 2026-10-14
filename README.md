@@ -1,0 +1,118 @@
+# Need for Speed: Nitro (Nintendo DS) — port a PC
+
+Port no oficial a Windows de **Need for Speed: Nitro** para Nintendo DS, con gráficos mejorados. El código del
+juego (ARM9) se **recompila a C** y se ejecuta de forma nativa en el PC. El hardware de la DS (chip 3D, motores
+2D, interrupciones, temporizadores, DMA, ARM7) se sustituye por una capa propia, y el 3D se dibuja con la
+tarjeta gráfica.
+
+> **Importante:** este repositorio **no contiene nada del juego**: ni la ROM, ni modelos, ni texturas, ni audio,
+> ni el código traducido. Para jugar necesitas tu propia copia del juego. El port carga todo desde tu ROM
+> extraída, en el momento de jugar. Es un proyecto personal sin ánimo de lucro.
+
+## Qué funciona
+
+- El juego arranca y se juega: menús, tutorial, carreras y partidas guardadas (probado en varias pistas; el
+  resto de pistas y modos no se ha probado a fondo).
+- **3D con la tarjeta gráfica** (OpenGL 3.3+), a la resolución de la ventana (hasta 2048x1536), con suavizado
+  de bordes MSAA. Si la gráfica falla, se dibuja por software.
+- Mejoras gráficas, cada una se puede activar o quitar:
+  - luz por píxel;
+  - subdivisión de los coches (más polígonos, sin grietas);
+  - filtrado de texturas con reducciones y filtrado anisotrópico;
+  - **texturas ampliadas x4 con IA** (Real-ESRGAN), con un modelo especial para los coches;
+  - niebla, sombras y modo de brillo como en la consola;
+  - barniz de los coches (reflejo de la escena, Fresnel y brillos);
+  - resplandor (bloom).
+- **Modelos 3D nuevos**: puedes cambiar un coche por uno hecho en Blender. Las guías explican cómo.
+- **Menú de opciones** al arrancar, con perfiles Original, Recomendada y Máxima.
+
+Falta el **sonido**. La lista completa de lo pendiente está en [`PROGRESS.md`](PROGRESS.md), sección
+"PENDIENTE / NO PERFECTO".
+
+## Requisitos
+
+- Windows 10 u 11 de 64 bits. Una gráfica con OpenGL 3.3 o superior es recomendable. En portátiles con dos
+  gráficas se usa la potente.
+- Tu ROM de *Need for Speed: Nitro* (EE. UU., `NTR-BNNE-USA`), extraída con **ndstool** (viene con devkitPro):
+  ```
+  ndstool -x nitro.nds -9 arm9.bin -7 arm7.bin -y9 y9.bin -y7 y7.bin -d data -y overlay -t banner.bin -h header.bin
+  ```
+  Por defecto el port la busca en `C:\nfs`.
+- Para compilar:
+  - [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (clang para Windows).
+  - Python 3 con `capstone`, `numpy` y `pillow`.
+- Opcional:
+  - Ghidra, para volver a generar la lista de funciones (ya incluida en `port/recomp/functions.csv`).
+  - Real-ESRGAN (`realesrgan-ncnn-vulkan`), para ampliar texturas.
+  - Blender, para modelos nuevos.
+
+> Algunas rutas están fijas en el código y en los `.cmd`: `C:\nfs`, `C:\Users\jj\...` y la carpeta de
+> llvm-mingw dentro de `tools/recomp/build.py`. Si tu equipo es distinto, cámbialas ahí.
+
+## Compilar
+
+```
+python -m venv .venv
+.venv\Scripts\pip install capstone numpy pillow
+.venv\Scripts\python.exe tools\recomp\build.py --rom C:\nfs --build C:\Users\TU_USUARIO\nfs-nitro-build\game
+```
+
+`build.py` hace tres cosas:
+1. Descubre las funciones que Ghidra no marcó.
+2. Traduce todo el ARM9 y los overlays a C, en la carpeta de compilación, **fuera del repositorio**.
+3. Lo compila en paralelo junto con la capa de ejecución (`port/recomp/*.c`) y genera `nfs_boot.exe`.
+
+La primera vez tarda unos minutos; después solo recompila lo que cambia.
+
+## Jugar
+
+Ejecuta `jugar.cmd` (o `nfs_boot.exe C:\nfs` desde la carpeta de compilación). Primero sale el menú de
+opciones.
+
+| Tecla | Botón DS | | Tecla | Función |
+|---|---|---|---|---|
+| Flechas | Cruceta | | F1 | Disposición de las pantallas |
+| Z / X | A / B | | F2 | Filtro de texturas |
+| A / S | Y / X | | F3 | Luz por píxel |
+| Q / W | L / R | | F4 | Subdivisión de los coches |
+| Intro | Start | | F5 / F6 | Niebla / sombras |
+| Retroceso | Select | | F7 / F8 | Barniz / resplandor |
+| Ratón | Pantalla táctil | | F9 | Gráfica o procesador |
+
+Las opciones se guardan en `opciones.ini`, junto a la partida guardada (`nfs_nitro.sav`).
+
+## Texturas y modelos mejorados
+
+- **Texturas:** `capturar_texturas.cmd` guarda las texturas que aparecen mientras juegas, y
+  `ampliar_texturas.cmd` las amplía con IA. Se pueden retocar a mano en Blender: ver
+  [`GUIA_TEXTURAS_BLENDER.md`](GUIA_TEXTURAS_BLENDER.md).
+- **Modelos:** `tools\extract_models.py` saca un coche a OBJ + PNG, y `tools\models\make_replacement.py`
+  mete en el juego el modelo editado. Ver [`GUIA_MODELOS_BLENDER.md`](GUIA_MODELOS_BLENDER.md).
+
+Las texturas y los modelos se quedan en carpetas tuyas, fuera del repositorio.
+
+## Estructura
+
+| Carpeta | Contenido |
+|---|---|
+| `port/recomp/` | Capa de ejecución: memoria y E/S (`rt.c`, `io.c`), interrupciones (`irq.c`), hilos (`threads.c`), ARM7 simulado (`arm7.c`), sustitutos de funciones del SDK (`hle.c`), intérprete de reserva (`interp.c`), chip 3D (`gx.c`, `gpu.inc.c`), 2D (`video.c`), ventana y teclado (`win.c`), menú (`menu.c`) |
+| `tools/recomp/` | Traductor ARM/Thumb → C (`recomp.py`), descubridor de funciones, compilación, pruebas contra un emulador |
+| `tools/models/`, `tools/textures/` | Lector de NSBMD, extractor, conversión de modelos, ampliación de texturas |
+| `tools/ghidra/` | Scripts de Ghidra (preparar el proyecto, exportar funciones) |
+| `notes/` | Todo lo averiguado: formato de los datos, mapa del código, cómo dibuja el juego, el recompilador |
+| `PROGRESS.md` | Estado del proyecto, decisiones y lo que queda |
+
+## Cómo funciona (resumen)
+
+1. **Traducción.** Cada función ARM9 se traduce a una función C que trabaja sobre los registros y la memoria de
+   una DS virtual. El código que no se pudo traducir lo ejecuta un intérprete. Se comprobó contra un emulador de
+   referencia (Unicorn), con 134.539 casos.
+2. **Hardware.** Las escrituras del juego en los registros de la DS llegan a la capa del port:
+   - las órdenes 3D van a `gx.c`, que transforma, recorta, ilumina y subdivide;
+   - la gráfica (`gpu.inc.c`) dibuja los píxeles;
+   - `video.c` compone el 2D;
+   - el ARM7 se simula a nivel de mensajes (pantalla táctil y memoria de guardado).
+3. **Mejoras.** Como el port sabe qué textura y qué modelo dibuja el juego en cada momento, puede cambiar
+   texturas (por su huella) y piezas de modelos (por la huella de su lista de visualización) por versiones mejores.
+
+Los detalles, con lo verificado y lo que es hipótesis, están en [`notes/recomp.md`](notes/recomp.md).
