@@ -70,6 +70,7 @@ int video_fog(void);
 int video_shadows(void);
 int video_shiny(void);
 int video_bloom(void);
+int video_sharp(void);
 static Poly *polys;
 static int poly_count;
 
@@ -1112,6 +1113,7 @@ typedef struct RenderState {
     float sky_h[3], sky_z[3]; /* color del cielo en el horizonte y arriba, para el reflejo de la pintura */
     const uint32_t *prev;   /* imagen 3D del fotograma anterior: lo que se refleja en la pintura */
     int bloom;              /* resplandor de las zonas muy brillantes (NFS_BLOOM) */
+    int sharp;              /* sin mipmaps: texturas nitidas tambien de lejos (NFS_SHARP) */
     int highlight;          /* DISP3DCNT bit 1: el modo 2 de los poligonos es "brillo" (si no, "toon") */
     float toon[32][3];      /* tabla de tonos (0x04000380), indexada por el rojo del color de vertice */
     int fog, fog_alpha_only, fog_step, fog_offset; /* niebla (DISP3DCNT bits 6-11, FOG_OFFSET) */
@@ -1244,7 +1246,7 @@ static void draw_triangle(const Poly *p, const TexImage *ti, const Vtx *v0, cons
                 float tr, tg, tb, ta;
                 /* Nivel de reduccion: segun cuantos texeles de la imagen caben en este pixel */
                 int lv = 0;
-                if (ti->levels > 1) {
+                if (ti->levels > 1 && !ds->sharp) {
                     float ux = fabsf((dsdx - fs * dwdx) * w), uy = fabsf((dsdy - fs * dwdy) * w);
                     float vx = fabsf((dtdx - ft * dwdx) * w), vy = fabsf((dtdy - ft * dwdy) * w);
                     float rho = ux > uy ? ux : uy;
@@ -1719,6 +1721,7 @@ static void render(void) {
     draw_state.prev = frames_drawn ? fb_bufs[fb_cur ^ 1] : 0;
     fb = fb_bufs[fb_cur];
     draw_state.bloom = video_bloom();
+    draw_state.sharp = video_sharp();
     if (!gpu_render()) pool_run(BANDS, band_job, 0); /* con la grafica, o por software */
     double tb0 = gpu_now();
     if (draw_state.bloom && !gpu_bloom_done) bloom_pass(); /* con la grafica ya lo hizo ella */

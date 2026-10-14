@@ -432,9 +432,13 @@ static int gpu_init(void) {
                 glGenSamplers(1, &sm);
                 glSamplerParameteri(sm, GL_TEXTURE_WRAP_S, wrap[s]);
                 glSamplerParameteri(sm, GL_TEXTURE_WRAP_T, wrap[t]);
-                glSamplerParameteri(sm, GL_TEXTURE_MIN_FILTER, f ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+                /* NFS_SHARP (por defecto): sin mipmaps, nitidas tambien de lejos (lo pidio el usuario; el suelo
+                 * lejano puede parpadear). Con mipmaps, de lejos se usan las reducciones (sin parpadeo). */
+                int sharp = video_sharp();
+                glSamplerParameteri(sm, GL_TEXTURE_MIN_FILTER,
+                                    f ? (sharp ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR) : (sharp ? GL_NEAREST : GL_NEAREST_MIPMAP_NEAREST));
                 glSamplerParameteri(sm, GL_TEXTURE_MAG_FILTER, f ? GL_LINEAR : GL_NEAREST);
-                if (f) glSamplerParameterf(sm, GL_TEXTURE_MAX_ANISOTROPY, max_aniso > 8 ? 8 : max_aniso);
+                if (f) glSamplerParameterf(sm, GL_TEXTURE_MAX_ANISOTROPY, max_aniso > 16 ? 16 : max_aniso);
                 glSamplerParameterf(sm, GL_TEXTURE_LOD_BIAS, f ? -0.4f : 0.0f);
                 gpu_samplers[f][s][t] = sm;
             }

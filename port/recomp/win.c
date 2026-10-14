@@ -23,6 +23,7 @@
  *   NFS_GPU=0          dibujar el 3D por software en vez de con la tarjeta grafica
  *   NFS_MSAA=n         muestras de suavizado de bordes con la tarjeta grafica (por defecto 4)
  *   NFS_BLOOM=0        sin resplandor (bloom)
+ *   NFS_SHARP=0        texturas con mipmaps (de lejos mas suaves, sin parpadeo); 1 = siempre nitidas
  *   NFS_SHINY=0        coches sin barniz (reflejo del cielo, Fresnel y brillos de la pintura)
  *   NFS_SPIKES=ms      apunta los fotogramas que tarden mas de esos milisegundos (tirones)
  *   NFS_HEADLESS=1     sin ventana (para pruebas automaticas)
@@ -45,7 +46,7 @@ void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
 
 /* ---- configuracion ------------------------------------------------------------------------- */
 static int configured, headless, layout, win_scale, internal_scale, filter = 1, shot_every;
-static int pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
+static int sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
 static uint32_t shot_from, shot_to = 0xFFFFFFFFu;
 
 static int env_int(const char *name, int fallback) { return getenv(name) ? atoi(getenv(name)) : fallback; }
@@ -68,6 +69,7 @@ static void configure(void) {
     shadows = env_int("NFS_SHADOWS", 1) != 0;
     shiny = env_int("NFS_SHINY", 1) != 0;
     bloom = env_int("NFS_BLOOM", 1) != 0;
+    sharp = env_int("NFS_SHARP", 1) != 0;
     gpu = env_int("NFS_GPU", 1) != 0;
     msaa = env_int("NFS_MSAA", 4);
     if (tess < 0) tess = 0;
@@ -114,6 +116,7 @@ int video_fog(void) { configure(); return fog; }
 int video_shadows(void) { configure(); return shadows; }
 int video_shiny(void) { configure(); return shiny; }
 int video_bloom(void) { configure(); return bloom; }
+int video_sharp(void) { configure(); return sharp; } /* sin mipmaps: texturas nitidas de lejos */
 int video_gpu(void) { configure(); return gpu; }
 int video_msaa(void) { configure(); return msaa; }
 

@@ -17,6 +17,8 @@ Que hace con cada coche:
     geometria sin subdividir: asi no se pasa del limite de poligonos por fotograma con muchos coches.
  5. tools/models/make_replacement.py escribe las piezas (.nmesh) en <modelos>\\reemplazos. Antes se guarda
     una copia de la carpeta (reemplazos_antes_<fecha>).
+Todas las piezas llevan la bandera de no subdividir en el port (la subdivision al vuelo redondeaba los pilotos).
+El modelo de garaje (lod0) tambien se sustituye por su version refinada (seleccion de coche).
 Las piezas compartidas por varios coches con sustitutos distintos se dejan como estan.
 Despues hay que volver a ejecutar upgrade_lods.py? No: este script ya cubre lod2/lod3; upgrade_lods.py solo
 hace falta para las luces (se conservan: no se tocan sus archivos).
@@ -184,6 +186,11 @@ def main():
                 elif s2['mat'] in by_mat:
                     for s in by_mat[s2['mat']]:
                         far.setdefault(s['shape'], []).append('%s__%s' % (s2['shape'], s2['hash']))
+        # el propio modelo de garaje (seleccion de coche) tambien: sin esto el port lo subdividia al vuelo y la
+        # trasera salia deformada (pilotos doblados) y su pintura no pasaba por el filtro de calcomanias
+        for s in lod0:
+            if s['shape'] in near:
+                near[s['shape']].append('%s__%s' % (s['shape'], s['hash']))
         if [m for m in skipped if m != 'lodglass']:  # una pieza sin pareja quedaria mezclada con el modelo nuevo
             report.append('%s: sin pareja para %s (otra textura): el coche se deja como esta' % (car, ', '.join(skipped)))
             empty = [h for h in empty if h not in {s['hash'] for lod in ('lod1', 'lod2', 'lod3') if info[lod] for s in info[lod]['shapes']}]
@@ -244,7 +251,7 @@ def main():
     total = 0
     for job in jobs:
         r = subprocess.run([sys.executable, os.path.join(HERE, 'make_replacement.py'), job['dst'], '--info',
-                            os.path.dirname(job['dst']), '--out', out], capture_output=True, text=True, errors='replace')
+                            os.path.dirname(job['dst']), '--out', out, '--runtime-subdiv', 'no'], capture_output=True, text=True, errors='replace')
         if r.returncode:
             print('fallo en', job['dst'], r.stdout[-1000:], r.stderr[-1000:])
             continue

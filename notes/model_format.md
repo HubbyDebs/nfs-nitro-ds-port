@@ -116,3 +116,13 @@ la geometría del modelo de garaje (`lod0`), refinada en Blender (`tools/models/
   dejaban escalones o halos blancos. VERIFICADO en carrera: la silueta del Camaro sale con bordes redondeados.
 - Si la pintura tiene sustituta en el pack, se usa esa. `NFS_SMOOTH_DECALS=0` lo desactiva; `NFS_SMOOTH_DUMP=1`
   guarda la original y la ampliada en PNG (depuración).
+
+## Selección de coche y texturas nítidas (2026-10-15)
+
+- El modelo de garaje (`lod0`, el de la selección de coche) también se sustituye por su versión refinada, y
+  ninguna pieza de `upgrade_cars.py` se subdivide ya en el port (`--runtime-subdiv no`): la subdivisión al vuelo
+  redondeaba la trasera y doblaba los pilotos (captura `bug skyline.PNG`). 480 piezas + 4 vacías.
+- Texturas sin mipmaps por defecto (`NFS_SHARP=1`, casilla del menú "Texturas siempre nítidas"): nítidas también
+  de lejos, a cambio de que el suelo lejano pueda parpadear. Anisotrópico x16 (antes x8) para cuando se usen.
+- La pantalla de "Circuito" con un coche en una plataforma es una imagen 2D fija (no cambia con los modelos).
+- Sin comprobar: la pantalla de selección de coche de las capturas (el guion de prueba no pasa por ella).

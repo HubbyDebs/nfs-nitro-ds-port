@@ -66,6 +66,7 @@ static Check checks[] = {
     {"NFS_SHINY", L"Coches con barniz: reflejo del cielo y brillos (mejora del port)", 1, 0},
     {"NFS_BLOOM", L"Resplandor en las zonas muy brillantes (bloom)", 1, 0},
     {"NFS_MESHES", L"Modelos 3D nuevos (carpeta nfs-nitro-models\\reemplazos)", 1, 0},
+    {"NFS_SHARP", L"Texturas siempre nítidas, también de lejos (sin mipmaps; el suelo puede parpadear)", 1, 0},
     {"NFS_TEXDUMP", L"Guardar las texturas nuevas para ampliarlas después", 0, 1},
 };
 
@@ -81,14 +82,14 @@ static Check checks[] = {
  * consola tambien las tiene. */
 typedef struct Preset {
     const wchar_t *name;
-    int combo[6], check[11];
+    int combo[6], check[12];
 } Preset;
 
 static const Preset presets[] = {
-    {L"Personalizada", {-1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
-    {L"Original (como la consola, sin mejoras)", {-1, -1, 1, 1, 0, 0}, {-1, -1, 0, 0, 0, 1, 1, 0, 0, 0, -1}},
-    {L"Recomendada", {-1, -1, 0, 0, 1, 2}, {-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
-    {L"Máxima potencia gráfica (puede ir lento)", {-1, -1, 6, 0, 2, 3}, {-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
+    {L"Personalizada", {-1, -1, -1, -1, -1, -1}, {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}},
+    {L"Original (como la consola, sin mejoras)", {-1, -1, 1, 1, 0, 0}, {-1, -1, 0, 0, 0, 1, 1, 0, 0, 0, 0, -1}},
+    {L"Recomendada", {-1, -1, 0, 0, 1, 2}, {-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
+    {L"Máxima potencia gráfica (puede ir lento)", {-1, -1, 6, 0, 2, 3}, {-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1}},
 };
 #define N_PRESETS (int)(sizeof presets / sizeof presets[0])
 static HWND preset_ctl;
