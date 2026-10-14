@@ -99,6 +99,27 @@ def main():
                         pending[h] = None  # ambigua
                     elif h not in pending:
                         pending[h] = data
+    # Luces de freno y de marcha atras (materiales blight / rlight): la misma geometria, marcada para que el port
+    # las dibuje como luz sumada (en la DS son un brillo de pocos pixeles; a alta resolucion tapaban el piloto)
+    lights = 0
+    for car in cars:
+        for lod in ('lod0', 'lod1', 'lod2', 'lod3'):
+            key = 'graphics/cars/%s/%s.nsbmd' % (car, lod)
+            if key not in names:
+                continue
+            m = nsbmd.load(z.read(names[key]))[0][0]
+            for si, (mat, tex, node) in shape_info(m).items():
+                if mat not in ('blight', 'rlight'):
+                    continue
+                shp = m.shapes[si]
+                h = shp['dl_hash']
+                if h in pending:
+                    continue
+                flags, out = build_mesh(m, [(shp, tex)], m, shp, tex)
+                flags |= 16 if mat == 'blight' else 32
+                pending[h] = struct.pack('<4sII', b'NMS1', flags, len(out)) + b''.join(out)
+                lights += 1
+    print('luces de freno y marcha atras marcadas: %d' % lights)
     ambiguous = 0
     for h, data in pending.items():
         path = os.path.join(args.out, '%016x.nmesh' % h)

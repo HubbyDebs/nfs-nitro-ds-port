@@ -53,6 +53,7 @@ typedef struct Poly {
     int lit;  /* todos sus vertices llevan normal: se puede iluminar por pixel */
     int ls;   /* indice en la tabla de estados de luz */
     int env;  /* textura de reflejo: coordenadas generadas a partir de la normal (pintura, cristales) */
+    int glow; /* luz del coche (1 freno, 2 marcha atras): se dibuja sumando luz (gpu.inc.c) */
     float envp[8]; /* para recalcularlas: s y t de partida y las dos filas de la matriz de textura */
 } Poly;
 
@@ -247,6 +248,7 @@ typedef struct RawPoly {
     Vtx v[4];
     int n, lit, ls;
     int notess;               /* viene de un modelo sustituto: ya trae sus poligonos, no se subdivide */
+    int glow;
     int env;
     float envp[8];
     uint32_t attr, tex, pal;
@@ -260,7 +262,7 @@ static int raw_count;
 static uint32_t raw_polys; /* poligonos tal como los envio el juego (sin subdividir) */
 static float tess_round = 0.6f; /* fuerza del redondeo (NFS_TESS_ROUND, en tanto por ciento) */
 
-static int cur_notess;
+static int cur_notess, cur_glow;
 static void add_polygon(Vtx *src, int n, int lit) {
     raw_polys++;
     if (raw_count >= MAX_RAW) return;
@@ -269,6 +271,7 @@ static void add_polygon(Vtx *src, int n, int lit) {
     r->n = n;
     r->lit = lit;
     r->notess = cur_notess;
+    r->glow = cur_glow;
     r->env = (cur_tex >> 30) == 2;
     if (r->env) { /* tc = raw + n * matriz (ver do_normal), en 1/16 de texel */
         r->envp[0] = (float)raw_s; r->envp[1] = (float)raw_t;
@@ -331,6 +334,7 @@ static void emit_polygon(const RawPoly *st, Vtx *src, int n) {
     poly->lit = st->lit;
     poly->ls = st->ls;
     poly->env = st->env;
+    poly->glow = st->glow;
     memcpy(poly->envp, st->envp, sizeof poly->envp);
     int fmt = (st->tex >> 26) & 7, alpha = (st->attr >> 16) & 31;
     /* los poligonos de sombra van siempre con los translucidos, despues de los opacos */
@@ -1427,14 +1431,22 @@ static void bloom_add_row(void *ctx, int y) {
 static void bloom_down_row(void *ctx, int y) { /* reducir a 1/4 quedandose con lo que pasa del umbral */
     (void)ctx;
     for (int x = 0; x < bl_w; x++) {
-        float acc[3] = {0, 0, 0};
+        float acc[3] = {0, 0, 0}, mean = 0;
+        for (int j = 0; j < 4; j++) /* luminancia media del bloque: solo brilla lo que destaca sobre ella */
+            for (int i = 0; i < 4; i++) {
+                uint32_t c = fb[(y * 4 + j) * fb_w + x * 4 + i];
+                if (c >> 24) mean += (((c >> 16) & 255) * 0.3f + ((c >> 8) & 255) * 0.59f + (c & 255) * 0.11f) / 255.0f;
+            }
+        mean /= 16;
+        float thr = mean + 0.10f > 0.84f ? mean + 0.10f : 0.84f;
         for (int j = 0; j < 4; j++)
             for (int i = 0; i < 4; i++) {
                 uint32_t c = fb[(y * 4 + j) * fb_w + x * 4 + i];
                 if (!(c >> 24)) continue;
                 float r = ((c >> 16) & 255) / 255.0f, g = ((c >> 8) & 255) / 255.0f, b = (c & 255) / 255.0f;
-                float l = r * 0.3f + g * 0.59f + b * 0.11f, k = (l - 0.84f) / 0.16f;
+                float l = r * 0.3f + g * 0.59f + b * 0.11f, k = (l - thr) / 0.16f;
                 if (k <= 0) continue;
+                if (k > 1) k = 1;
                 acc[0] += r * k; acc[1] += g * k; acc[2] += b * k;
             }
         for (int k = 0; k < 3; k++) bl_a[(y * bl_w + x) * 3 + k] = acc[k] / 16;
@@ -1761,7 +1773,8 @@ typedef struct MeshVtx {
 typedef struct Mesh {
     uint64_t hash;
     int flags, count;         /* flags: 1 manda normales, 2 coordenadas de textura, 4 colores (como la pieza
-                               * original), 8 no subdividir en el port; count: vertices (de tres en tres) */
+                               * original), 8 no subdividir en el port, 16/32 luz de freno/marcha atras;
+                               * count: vertices (de tres en tres) */
     MeshVtx *v;
 } Mesh;
 
@@ -1824,6 +1837,7 @@ static void draw_mesh(const Mesh *m) {
     uint32_t p = 0;
     command(0x40, &p); /* triangulos */
     cur_notess = (m->flags & 8) != 0; /* 8: ya viene muy subdividido: el port no lo subdivide mas */
+    cur_glow = (m->flags >> 4) & 3;     /* 16 luz de freno, 32 luz de marcha atras */
     for (int i = 0; i < m->count; i++) {
         const MeshVtx *v = &m->v[i];
         if (m->flags & 2) {
@@ -1841,6 +1855,7 @@ static void draw_mesh(const Mesh *m) {
         submit_vertex(v->x, v->y, v->z);
     }
     cur_notess = 0;
+    cur_glow = 0;
     command(0x41, &p);
 }
 

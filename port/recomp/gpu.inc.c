@@ -139,9 +139,10 @@ static const char *GPU_FS =
     "uniform int u_shiny; uniform vec3 u_sky_h; uniform vec3 u_sky_z; uniform sampler2D u_prev; uniform int u_has_prev;\n"
     "uniform vec2 u_res; uniform float u_scale;\n"
     "uniform int u_wbuffer; uniform float u_depth_bias; uniform float u_alpha_ref; uniform int u_cutout; uniform int u_pass;\n"
-    "uniform int u_maskonly;\n"
+    "uniform int u_maskonly; uniform vec3 u_glow;\n"
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec3 u_fog_rgb; uniform float u_fog_a; uniform float u_fog_offset;\n"
     "uniform float u_fog_step; uniform float u_fog_table[32];\n"
+    "float t_lum(vec3 c) { return max(c.r, max(c.g, c.b)); }\n"
     "void main() {\n"
     "  float depth = (u_wbuffer != 0) ? v_w / 65536.0 : v_z * 0.5 + 0.5;\n"
     "  gl_FragDepth = clamp(depth + u_depth_bias, 0.0, 1.0);\n"
@@ -195,6 +196,7 @@ static const char *GPU_FS =
     "  }\n"
     "  if (a <= 0.0 || a <= u_alpha_ref) discard;\n"
     "  if (u_cutout != 0 && a < 0.5) discard;\n"
+    "  if (u_glow.r + u_glow.g + u_glow.b > 0.0) { o_col = vec4(t_lum(c) * u_glow * a, 0.0); return; }\n"
     "  if (u_pass == 1 && a < 0.999) discard;\n"
     "  if (u_pass == 2 && a >= 0.999) discard;\n"
     "  if (u_pass != 2) a = 1.0;\n"
@@ -221,13 +223,15 @@ static const char *GPU_BRIGHT_FS =
     "#version 330 core\n"
     "in vec2 v_p; out vec4 o; uniform sampler2D u_src; uniform vec2 u_texel;\n"
     "void main() {\n"
-    "  vec3 acc = vec3(0.0);\n"
+    "  vec3 acc = vec3(0.0); vec3 rgb[16]; float lum[16]; float mean = 0.0;\n"
     "  for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {\n"
-    "    vec4 c = texture(u_src, v_p + (vec2(i, j) - 1.5) * u_texel);\n"
-    "    if (c.a <= 0.0) continue;\n"
-    "    vec3 rgb = c.rgb / c.a; float l = dot(rgb, vec3(0.3, 0.59, 0.11)); float k = (l - 0.84) / 0.16;\n"
-    "    if (k > 0.0) acc += rgb * k;\n"
+    "    vec4 c = texture(u_src, v_p + (vec2(i, j) - 1.5) * u_texel); int k = j * 4 + i;\n"
+    "    rgb[k] = c.a > 0.0 ? c.rgb / c.a : vec3(0.0); lum[k] = c.a > 0.0 ? dot(rgb[k], vec3(0.3, 0.59, 0.11)) : -1.0;\n"
+    "    mean += max(lum[k], 0.0);\n"
     "  }\n"
+    "  mean /= 16.0;\n"
+    "  float thr = max(0.84, mean + 0.10); /* solo lo que destaca sobre su entorno: un cielo claro y uniforme no brilla */\n"
+    "  for (int k = 0; k < 16; k++) { float g = (lum[k] - thr) / 0.16; if (g > 0.0) acc += rgb[k] * min(g, 1.0); }\n"
     "  o = vec4(acc / 16.0, 1.0);\n"
     "}\n";
 static const char *GPU_BLUR_FS =
@@ -465,6 +469,7 @@ static int gpu_same_batch(const Poly *a, const Poly *b, const TexImage *ta, cons
     if (ta != tb || a->attr != b->attr || a->translucent != b->translucent || a->lit != b->lit || a->env != b->env) return 0;
     if (((a->tex >> 16) & 15) != ((b->tex >> 16) & 15)) return 0;
     if (a->lit && a->ls != b->ls) return 0;
+    if (a->glow != b->glow) return 0;
     if (a->env && memcmp(a->envp, b->envp, sizeof a->envp)) return 0;
     return 1;
 }
@@ -645,6 +650,7 @@ static void gpu_render_frame(void) {
     for (int i = 0; i < 32; i++) ft[i] = ds->fog_table[i];
     glUniform1fv(U("u_fog_table"), 32, ft);
     glUniform1i(U("u_maskonly"), 0);
+    glUniform3f(U("u_glow"), 0, 0, 0);
 
     int last_ls = -1, shadow_drawn = 0, last_trans_id = -1;
     for (int b = 0; b < nb; b++) {
@@ -698,6 +704,20 @@ static void gpu_render_frame(void) {
             glStencilMask(0x80);
             glDrawArrays(GL_TRIANGLES, bt->first, bt->count);
             shadow_drawn = 1;
+            continue;
+        }
+        if (p->glow) { /* luces del coche: luz sumada (roja de freno, blanca de marcha atras), sin tapar el piloto */
+            gpu_set_poly_state(p, ti, ds, 2, &last_ls);
+            if (p->glow == 1) glUniform3f(U("u_glow"), 1.15f, 0.14f, 0.08f);
+            else glUniform3f(U("u_glow"), 0.75f, 0.75f, 0.7f);
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
+            glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+            glDepthMask(0);
+            glStencilMask(0);
+            glStencilFunc(GL_ALWAYS, 0, 0);
+            glDrawArrays(GL_TRIANGLES, bt->first, bt->count);
+            glUniform3f(U("u_glow"), 0, 0, 0);
             continue;
         }
         /* translucidos: primero sus pixeles opacos (como un opaco), luego los translucidos mezclados */

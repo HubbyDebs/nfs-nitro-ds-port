@@ -604,3 +604,23 @@ resoluciones x6 y x8; "Máxima" = x6 + MSAA x8 + subdivisión 2; "Original" quit
 - **2D**: ventana de sprites, mosaico de fondos de teselas y de sprites, sprites de mapa de bits. 0 píxeles
   distintos en las 9 capturas de prueba (el juego no los usa ahí).
 
+
+## Segunda ronda tras probar el usuario (2026-10-14)
+
+Quejas del usuario: sonido de carrera malo (el del menú bien), traseras de algunos coches (el Dodge Charger) y el
+cielo raro. Captura `Capturaug 2.PNG`.
+
+- **Sonido**: error de unidades. La librería SND trabaja en **décimas de dB** (SNDi_DecibelSquareTable = 400·log10,
+  mínimo -723 = -72,3 dB; la envolvente va en esas unidades ×128) y se tomaban como dB: envolventes 10 veces más
+  rápidas, sostenidos demasiado altos y el volumen por pista del juego mal escalado. Corregido; además un
+  limitador suave (la suma de música, motores y efectos saturaba). Grabación de la carrera: 0 % saturado.
+  En carrera el juego cambia tono (+12), volumen (+10) y pan (+9) de las pistas ~100 veces por segundo
+  (VERIFICADO con `NFS_SND_COUNT=1`); cada efecto es una secuencia de una nota de duración 0 (hasta que se pare).
+- **Traseras**: los materiales `blight` y `rlight` de cada coche son un brillo (textura A5I3 blanca de 32x32 con
+  degradado) que el juego pone sobre los pilotos al frenar o ir marcha atrás. A alta resolución eran manchas
+  blancas tapando el piloto (en la captura, el Charger frenando). `upgrade_lods.py` marca esas piezas (66, bandera
+  16/32 del `.nmesh`) y la gráfica las dibuja como luz sumada, roja de freno y blanca suave de marcha atrás.
+  Sin ver todavía en pantalla (en la prueba, al frenar la cámara pasa a mirar de frente).
+- **Cielo**: HIPÓTESIS más probable, el resplandor: un cielo claro y uniforme pasaba del umbral y soltaba un halo
+  que se comía el horizonte. Ahora solo brilla lo que destaca sobre su bloque de 4x4 (umbral = máx(0,84, media +
+  0,10)), en la gráfica y en software. Si el cielo sigue raro, probar F5 (niebla) y F8 (resplandor).

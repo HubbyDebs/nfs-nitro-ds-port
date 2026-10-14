@@ -132,6 +132,22 @@ void arm7_message(uint32_t word) {
                 }
             }
             snd_command(id, mem_r32(cmd + 8), mem_r32(cmd + 12), mem_r32(cmd + 16), mem_r32(cmd + 20));
+            if (getenv("NFS_SND_COUNT")) { /* cuantas ordenes de cada tipo por segundo */
+                static int cnt[40], ofs7[32];
+                static uint32_t last;
+                if (id < 40) cnt[id]++;
+                if (id == 7 && mem_r32(cmd + 16) < 32) ofs7[mem_r32(cmd + 16)]++;
+                if (g_frame / 60 != last) {
+                    last = g_frame / 60;
+                    printf("[snd] segundo %u:", last);
+                    for (int k = 0; k < 40; k++) if (cnt[k]) printf(" %d:%d", k, cnt[k]);
+                    printf(" | pista por campo:");
+                    for (int k = 0; k < 32; k++) if (ofs7[k]) printf(" +%d:%d", k, ofs7[k]);
+                    printf("%c", 10);
+                    memset(cnt, 0, sizeof cnt);
+                    memset(ofs7, 0, sizeof ofs7);
+                }
+            }
             if (id == 29) {
                 shared = mem_r32(cmd + 8);
                 printf("[arm7] sonido: zona compartida en %08x%c", shared, 10);

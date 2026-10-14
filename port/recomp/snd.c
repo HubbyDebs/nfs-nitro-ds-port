@@ -36,10 +36,12 @@ static int rd16(uint32_t a) { return (int)mem_r16(a); }
 static uint32_t rd32(uint32_t a) { return mem_r32(a); }
 
 /* ---- tablas ------------------------------------------------------------------------------------ */
-static int db_square(int v) { /* 40*log10(v/127) en dB, como SNDi_DecibelSquareTable */
+/* Volumenes del SDK: en DECIMAS de decibelio (-723 = -72,3 dB = silencio). La envolvente va en esas mismas
+ * unidades por 128. (Antes se tomaban como decibelios: envolventes 10 veces mas rapidas y sostenidos mal.) */
+static int db_square(int v) { /* 10 * 40*log10(v/127), como SNDi_DecibelSquareTable */
     if (v <= 0) return -723;
     if (v >= 127) return 0;
-    int d = (int)floor(40.0 * log10(v / 127.0) + 0.5);
+    int d = (int)floor(400.0 * log10(v / 127.0) + 0.5);
     return d < -723 ? -723 : d;
 }
 static int attack_coeff(int a) {
@@ -464,6 +466,17 @@ static void stop_player(int pi) {
 
 static void prepare_player(int pi, uint32_t base, uint32_t offset, uint32_t bank) {
     if (pi < 0 || pi > 15) return;
+    if (getenv("NFS_SND_LOG")) {
+        static uint32_t seen[64];
+        int dup = 0;
+        for (int i = 0; i < 64 && seen[i]; i++) dup |= seen[i] == base + offset;
+        if (!dup) {
+            for (int i = 0; i < 64; i++) if (!seen[i]) { seen[i] = base + offset; break; }
+            printf("[sonido] secuencia %08x+%x en reproductor %d:", base, offset, pi);
+            for (int i = 0; i < 48; i++) printf(" %02x", rd8(base + offset + i));
+            printf("%c", 10);
+        }
+    }
     stop_player(pi);
     Player *pl = &players[pi];
     pl->seq_base = base;
@@ -523,7 +536,7 @@ static void seq_frame(void) {
         Track *t = &tracks[c->track];
         int pitch = (c->key - c->base_key) * 64 + t->bend * t->bend_range * 64 / 128 + t->ext_pitch;
         double vol_db = db_square(c->velocity) + db_square(t->vol) + db_square(t->expr) + db_square(pl->volume) +
-                        (t->ext_fader + pl->ext_fader) / 10.0 + c->env / 128.0;
+                        t->ext_fader + pl->ext_fader + c->env / 128.0; /* decimas de dB */
         int pan = 64 + t->pan + t->ext_pan + (c->pan - 64);
         if (t->mod_depth) { /* vibrato / tremolo / paneo */
             if (t->mod_delay_left < t->mod_delay) t->mod_delay_left++;
@@ -531,14 +544,14 @@ static void seq_frame(void) {
                 t->mod_counter = (t->mod_counter + t->mod_speed * 2) & 0xFFFF;
                 double lfo = sin(t->mod_counter / 65536.0 * 2 * 3.14159265) * t->mod_depth * t->mod_range;
                 if (t->mod_type == 0) pitch += (int)(lfo * 64 / 128);
-                else if (t->mod_type == 1) vol_db += lfo / 64.0;
+                else if (t->mod_type == 1) vol_db += lfo * 10 / 64.0;
                 else pan += (int)(lfo / 2);
             }
         }
         if (pan < 0) pan = 0;
         if (pan > 127) pan = 127;
         c->period = c->base_period * pow(2.0, -pitch / 768.0);
-        double amp = vol_db <= -72 ? 0 : pow(10.0, vol_db / 20.0);
+        double amp = vol_db <= -720 ? 0 : pow(10.0, vol_db / 200.0);
         c->amp_l = amp * (127 - pan) / 127.0;
         c->amp_r = amp * pan / 127.0;
     }
@@ -604,8 +617,11 @@ static void mix(int frames) {
                 r += v * amp * c->pan / 127.0;
             }
         }
-        double mv = master_volume / 127.0 * out_gain * 0.6;
+        double mv = master_volume / 127.0 * out_gain * 0.5;
         l *= mv; r *= mv;
+        /* limitador suave: con musica, motores y efectos a la vez la suma pasaba de 1 y saturaba */
+        l = l > 0.7 ? 0.7 + 0.3 * tanh((l - 0.7) / 0.3) : l < -0.7 ? -0.7 + 0.3 * tanh((l + 0.7) / 0.3) : l;
+        r = r > 0.7 ? 0.7 + 0.3 * tanh((r - 0.7) / 0.3) : r < -0.7 ? -0.7 + 0.3 * tanh((r + 0.7) / 0.3) : r;
         int il = (int)(l * 32767), ir = (int)(r * 32767);
         if (il > 32767) il = 32767;
         if (il < -32768) il = -32768;
