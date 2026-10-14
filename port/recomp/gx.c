@@ -54,6 +54,7 @@ typedef struct Poly {
     int ls;   /* indice en la tabla de estados de luz */
     int env;  /* textura de reflejo: coordenadas generadas a partir de la normal (pintura, cristales) */
     int glow; /* luz del coche (1 freno, 2 marcha atras): se dibuja sumando luz (gpu.inc.c) */
+    int smooth; /* su textura se amplia con bordes suaves (pintura del coche con calcomanias, ver smooth_texture) */
     float envp[8]; /* para recalcularlas: s y t de partida y las dos filas de la matriz de textura */
 } Poly;
 
@@ -249,7 +250,7 @@ typedef struct RawPoly {
     Vtx v[4];
     int n, lit, ls;
     int notess;               /* viene de un modelo sustituto: ya trae sus poligonos, no se subdivide */
-    int glow;
+    int glow, smooth;
     int env;
     float envp[8];
     uint32_t attr, tex, pal;
@@ -263,7 +264,7 @@ static int raw_count;
 static uint32_t raw_polys; /* poligonos tal como los envio el juego (sin subdividir) */
 static float tess_round = 0.6f; /* fuerza del redondeo (NFS_TESS_ROUND, en tanto por ciento) */
 
-static int cur_notess, cur_glow;
+static int cur_notess, cur_glow, cur_smooth;
 static void add_polygon(Vtx *src, int n, int lit) {
     raw_polys++;
     if (raw_count >= MAX_RAW) return;
@@ -273,6 +274,7 @@ static void add_polygon(Vtx *src, int n, int lit) {
     r->lit = lit;
     r->notess = cur_notess;
     r->glow = cur_glow;
+    r->smooth = cur_smooth;
     r->env = (cur_tex >> 30) == 2;
     if (r->env) { /* tc = raw + n * matriz (ver do_normal), en 1/16 de texel */
         r->envp[0] = (float)raw_s; r->envp[1] = (float)raw_t;
@@ -336,6 +338,7 @@ static void emit_polygon(const RawPoly *st, Vtx *src, int n) {
     poly->ls = st->ls;
     poly->env = st->env;
     poly->glow = st->glow;
+    poly->smooth = st->smooth;
     memcpy(poly->envp, st->envp, sizeof poly->envp);
     int fmt = (st->tex >> 26) & 7, alpha = (st->attr >> 16) & 31;
     /* los poligonos de sombra van siempre con los translucidos, despues de los opacos */
@@ -607,6 +610,8 @@ typedef struct TexImage {
     uint32_t version, gl_version; /* cambia cada vez que cambia la imagen; la grafica la vuelve a subir */
     unsigned int gl;          /* textura en la grafica (gpu.inc.c) */
     uint64_t hash;            /* huella del contenido (el nombre de su archivo en la carpeta de texturas) */
+    uint32_t *big;            /* ampliacion propia con bordes suaves (smooth_texture) */
+    int big_size, smoothed;
 } TexImage;
 
 /* Las imagenes descodificadas valen mientras el juego no escriba en la memoria que leen (ver
@@ -948,6 +953,7 @@ static void decode_texture(TexImage *t, uint32_t tp, uint32_t pal) {
     t->decoded_at = t->checked_at = vram_epoch;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) t->own[y * w + x] = decode_texel(tp, pal, w, x, y);
+    t->smoothed = 0;
     t->has_alpha = 0;
     for (int i = 0; i < w * h; i++)
         if ((t->own[i] >> 24) != 255) { t->has_alpha = 1; break; }
@@ -965,6 +971,93 @@ static void decode_texture(TexImage *t, uint32_t tp, uint32_t pal) {
     QueryPerformanceCounter(&q1);
     QueryPerformanceFrequency(&qf);
     perf_tex_ms += (double)(q1.QuadPart - q0.QuadPart) * 1000 / (double)qf.QuadPart;
+}
+
+/* Pintura de los coches: el juego la compone mientras se juega (color, franjas y la calcomania del tema, una
+ * mascara de 1 bit de 128x128 pintada en negro), asi que no esta en el pack de texturas ampliadas y las
+ * calcomanias se veian en escalera. Se amplia x4: bicubica (Catmull-Rom) y, donde hay un borde marcado entre
+ * los cuatro texeles mas cercanos, el color se lleva hacia el mas oscuro o el mas claro de ellos segun la
+ * luminancia interpolada con una B-spline (mas suave): los bordes quedan nitidos y redondeados en vez de en
+ * escalera. Elegida entre tres variantes probadas sobre una pintura real (las otras dejaban escalones o halos).
+ * Las zonas lisas y los degradados suaves (diferencia de luminancia pequena) quedan con la bicubica. */
+static float cr_w(float x) { /* Catmull-Rom */
+    x = fabsf(x);
+    return x < 1 ? 1.5f * x * x * x - 2.5f * x * x + 1 : x < 2 ? -0.5f * x * x * x + 2.5f * x * x - 4 * x + 2 : 0;
+}
+static float bs_w(float x) { /* B-spline cubica: mas suave, para la forma de los bordes */
+    x = fabsf(x);
+    return x < 1 ? (4 - 6 * x * x + 3 * x * x * x) / 6 : x < 2 ? (2 - x) * (2 - x) * (2 - x) / 6 : 0;
+}
+static float luma_of(uint32_t c) { return (((c >> 16) & 255) * 0.3f + ((c >> 8) & 255) * 0.59f + (c & 255) * 0.11f) / 255.0f; }
+static void smooth_texture(TexImage *t) {
+    if (t->smoothed || t->k != 1 || t->pending || t->has_alpha) return; /* ya hecha, o hay sustituta del pack */
+    t->smoothed = 1;
+    static int on = -1;
+    if (on < 0) on = !getenv("NFS_SMOOTH_DECALS") || atoi(getenv("NFS_SMOOTH_DECALS"));
+    if (!on) return;
+    const int K = 4, w = t->w, h = t->h, W = w * K, H = h * K;
+    if (t->big_size < W * H * 2) {
+        t->big = realloc(t->big, sizeof(uint32_t) * W * H * 2);
+        t->big_size = W * H * 2;
+    }
+    const uint32_t *src = t->own;
+    for (int Y = 0; Y < H; Y++) {
+        float sy = (Y + 0.5f) / K - 0.5f;
+        int iy = (int)floorf(sy);
+        float fy = sy - iy, wy[4], by[4];
+        for (int j = 0; j < 4; j++) { wy[j] = cr_w(fy - (j - 1)); by[j] = bs_w(fy - (j - 1)); }
+        for (int X = 0; X < W; X++) {
+            float sx = (X + 0.5f) / K - 0.5f;
+            int ix = (int)floorf(sx);
+            float fx = sx - ix, wx[4], bx[4], acc[3] = {0, 0, 0}, lb = 0;
+            for (int i = 0; i < 4; i++) { wx[i] = cr_w(fx - (i - 1)); bx[i] = bs_w(fx - (i - 1)); }
+            for (int j = 0; j < 4; j++) {
+                int yy = (iy + j - 1) & (h - 1); /* las texturas se repiten (tamanos potencia de 2) */
+                for (int i = 0; i < 4; i++) {
+                    uint32_t c = src[yy * w + ((ix + i - 1) & (w - 1))];
+                    float k = wx[i] * wy[j];
+                    acc[0] += ((c >> 16) & 255) * k; acc[1] += ((c >> 8) & 255) * k; acc[2] += (c & 255) * k;
+                    lb += luma_of(c) * bx[i] * by[j];
+                }
+            }
+            /* los cuatro texeles mas cercanos: el mas oscuro y el mas claro */
+            uint32_t lo = 0, hi = 0;
+            float llo = 2, lhi = -1;
+            for (int j = 0; j < 2; j++)
+                for (int i = 0; i < 2; i++) {
+                    uint32_t c = src[((iy + j) & (h - 1)) * w + ((ix + i) & (w - 1))];
+                    float l = luma_of(c);
+                    if (l < llo) { llo = l; lo = c; }
+                    if (l > lhi) { lhi = l; hi = c; }
+                }
+            float out[3];
+            if (lhi - llo > 0.15f) { /* borde: nitido y suave */
+                float u = (lb - llo) / (lhi - llo);
+                u = u < 0.3f ? 0 : u > 0.7f ? 1 : (u - 0.3f) / 0.4f;
+                u = u * u * (3 - 2 * u);
+                for (int c = 0; c < 3; c++) {
+                    float a = (float)((lo >> (16 - 8 * c)) & 255), b = (float)((hi >> (16 - 8 * c)) & 255);
+                    out[c] = a + (b - a) * u;
+                }
+            } else {
+                for (int c = 0; c < 3; c++) out[c] = acc[c];
+            }
+            uint32_t r = (uint32_t)(out[0] < 0 ? 0 : out[0] > 255 ? 255 : out[0] + 0.5f);
+            uint32_t g = (uint32_t)(out[1] < 0 ? 0 : out[1] > 255 ? 255 : out[1] + 0.5f);
+            uint32_t b = (uint32_t)(out[2] < 0 ? 0 : out[2] > 255 ? 255 : out[2] + 0.5f);
+            t->big[Y * W + X] = 0xFF000000u | r << 16 | g << 8 | b;
+        }
+    }
+    if (getenv("NFS_SMOOTH_DUMP")) { /* depuracion: la original y la ampliada */
+        char path[64];
+        snprintf(path, sizeof path, "pintura_%016llx.png", (unsigned long long)t->hash);
+        video_save_png_rgba(path, t->own, w, h);
+        snprintf(path, sizeof path, "pintura_%016llx_x4.png", (unsigned long long)t->hash);
+        video_save_png_rgba(path, t->big, W, H);
+    }
+    t->k = K;
+    t->levels = build_mips(t->big, W, H, t->mip, t->mw, t->mh);
+    t->version++;
 }
 
 static const TexImage *get_texture(uint32_t tp, uint32_t pal) {
@@ -1591,6 +1684,7 @@ static void render(void) {
         poly_ymax[i] = (int)(hi * scale) + 1;
         poly_tex[i] = get_texture(p->tex, p->pal);
         if (p->lit && poly_tex[i]) note_lit_texture(poly_tex[i]);
+        if (p->smooth && poly_tex[i]) smooth_texture((TexImage *)poly_tex[i]);
     }
     vram_epoch++; /* lo que el juego escriba a partir de ahora es posterior a estas texturas */
     if (getenv("NFS_GLOW_LOG")) /* depuracion: luces de freno / marcha atras */
@@ -1867,6 +1961,7 @@ static void draw_mesh(const Mesh *m) {
     command(0x40, &p); /* triangulos */
     cur_notess = (m->flags & 8) != 0; /* 8: ya viene muy subdividido: el port no lo subdivide mas */
     cur_glow = (m->flags >> 4) & 3;     /* 16 luz de freno, 32 luz de marcha atras */
+    cur_smooth = (m->flags >> 6) & 1;   /* 64 pintura del coche: textura ampliada con bordes suaves */
     for (int i = 0; i < m->count; i++) {
         const MeshVtx *v = &m->v[i];
         if (m->flags & 2) {
@@ -1885,6 +1980,7 @@ static void draw_mesh(const Mesh *m) {
     }
     cur_notess = 0;
     cur_glow = 0;
+    cur_smooth = 0;
     command(0x41, &p);
 }
 

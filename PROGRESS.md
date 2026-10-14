@@ -196,6 +196,8 @@ Tercera ronda (2026-10-14; detalle en `notes/recomp.md` y `notes/sound.md`, "Ter
 - **Modelos de todos los coches** (`tools/models/upgrade_cars.py`): en carrera y de lejos, el modelo de garaje
   refinado, como el Focus de prueba. 34 de 35 coches (la F150 tiene otra textura de garaje). Ver
   `notes/model_format.md`.
+- **Calcomanías de los coches sin escalones**: la pintura (que el juego compone al jugar) se amplía x4 con bordes
+  suaves en el port (`notes/model_format.md`).
 
 Lo que queda:
 1. **Escuchar el sonido** (el usuario): volumen, tono, cortes, y la música sustituta con canciones de verdad

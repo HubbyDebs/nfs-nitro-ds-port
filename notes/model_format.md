@@ -102,3 +102,17 @@ la geometría del modelo de garaje (`lod0`), refinada en Blender (`tools/models/
 - Copia del estado anterior: `<modelos>\reemplazos_original` (para volver atrás, copiarla sobre `reemplazos`).
 - Pendiente: los pilotos traseros se ven oscuros cuando la trasera queda a la sombra (iluminación del juego);
   sin comprobar en el resto de pistas.
+
+## Calcomanías de la pintura más suaves (2026-10-14)
+
+- La pintura de cada coche (`tex_rgb`) la compone el juego mientras se juega: color, franjas y la calcomanía del
+  tema (`Graphics/Cars/bodygraphics/bodyGraphicN_128.bmp` / `_256.bmp`: máscaras de 1 bit, 34 dibujos) pintada en
+  negro. No está en el pack de texturas ampliadas (cambia con cada coche y color), así que se veía en escalera.
+- `smooth_texture` (`gx.c`): las piezas de carrocería de los modelos sustitutos llevan la bandera 64 (la pone
+  `make_replacement.py` cuando el material es `tex_rgb_mat`) y su textura se amplía x4 una vez: bicúbica
+  (Catmull-Rom) en las zonas lisas; en los bordes (diferencia de luminancia > 0,15 entre los 4 texeles más
+  cercanos) el color va del más oscuro al más claro según la luminancia interpolada con una B-spline. Elegida
+  entre tres variantes probadas en Python sobre una pintura real (`smoothproto.py`, fuera del proyecto): las otras
+  dejaban escalones o halos blancos. VERIFICADO en carrera: la silueta del Camaro sale con bordes redondeados.
+- Si la pintura tiene sustituta en el pack, se usa esa. `NFS_SMOOTH_DECALS=0` lo desactiva; `NFS_SMOOTH_DUMP=1`
+  guarda la original y la ampliada en PNG (depuración).

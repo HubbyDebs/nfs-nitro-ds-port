@@ -124,6 +124,8 @@ def main():
                     out.append(struct.pack('<iiihhhhhH', x, y, z, s16, t16, nx, ny, nz, col))
         # Si la pieza ya viene muy subdividida (mas del triple de triangulos que la original), el port no
         # la subdivide otra vez; si no, se le aplica la misma subdivision que al resto (NFS_TESS).
+        if si.get('material') == 'tex_rgb_mat':  # pintura del coche: el port amplia su textura con bordes suaves
+            flags |= 64
         if args.runtime_subdiv == 'no' or (args.runtime_subdiv == 'auto' and len(out) // 3 > 3 * si['triangles']):
             flags |= 8
         path = os.path.join(args.out, h + '.nmesh')

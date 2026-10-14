@@ -109,7 +109,7 @@ def main():
         sys.exit(1)
 
     objs = sorted(glob.glob(os.path.join(args.build, '*.o')))
-    exe = os.path.join(args.build, 'nfs_boot.exe')
+    exe = os.path.join(args.build, os.environ.get('NFS_EXE_NAME', 'nfs_boot.exe'))
     subprocess.check_call([CLANG, '-o', exe] + objs + ['-lgdi32', '-luser32', '-lopengl32', '-lshell32', '-lole32', '-lwinmm', '-lmfplat', '-lmfreadwrite', '-lmfuuid', '-lm'])
     print(f"compilados {len(jobs)} archivos, enlazado {exe} en {time.time() - t0:.0f} s")
 
