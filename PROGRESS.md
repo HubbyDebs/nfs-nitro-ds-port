@@ -193,6 +193,10 @@ Tercera ronda (2026-10-14; detalle en `notes/recomp.md` y `notes/sound.md`, "Ter
 - **Música en alta calidad**: la de la ROM es mono, 22,7 kHz y 4 bits. El port puede tocar los archivos del
   usuario en su lugar, sincronizados con el juego (`GUIA_MUSICA.md`).
 
+- **Modelos de todos los coches** (`tools/models/upgrade_cars.py`): en carrera y de lejos, el modelo de garaje
+  refinado, como el Focus de prueba. 34 de 35 coches (la F150 tiene otra textura de garaje). Ver
+  `notes/model_format.md`.
+
 Lo que queda:
 1. **Escuchar el sonido** (el usuario): volumen, tono, cortes, y la música sustituta con canciones de verdad
    (probada solo con archivos hechos de la original). Sin hacer: efecto de reverberación por captura,

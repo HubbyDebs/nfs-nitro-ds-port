@@ -77,3 +77,28 @@ Comprobado (VERIFICADO): el Focus extraído se ve bien en Blender (textura en su
 - El sustituto usa el material del juego: no puede cambiar texturas ni añadir materiales nuevos (para texturas, ver
   `GUIA_TEXTURAS_BLENDER.md`).
 - Cada nivel de detalle es una pieza distinta: para el coche del jugador basta con `lod1`.
+
+## Todos los coches de una vez: `tools/models/upgrade_cars.py` (2026-10-14)
+
+Lo mismo que el Focus de prueba, automático para todos: en carrera (`lod1`) y de lejos (`lod2`, `lod3`) se dibuja
+la geometría del modelo de garaje (`lod0`), refinada en Blender (`tools/models/blender_batch.py`, una sola sesión).
+- **Emparejado de piezas** (VERIFICADO en los datos de los 35 coches con carpeta normal): carrocería por el mismo
+  material (`tex_rgb_mat`), detalles por el nombre con un 1 (`cam_det` → `cam_det1`), cristales `glass` →
+  `lodglass`. Solo si las dos texturas son la misma imagen: diferencia de color media < 28 o correlación de la
+  luminancia > 0,6 (el GT500 tiene el dibujo retocado: 0,69). Las luces no se tocan (el `lod0` no las tiene).
+  Ruedas: `wheel_lod0` sustituye a `wheel_lod1/2/3`.
+- **F150 se queda original**: su textura de detalles de garaje tiene otra disposición (correlación -0,19). Si
+  una pieza de detalles no tiene pareja, el coche entero se deja (no se mezclan piezas viejas y nuevas).
+- **Beetle63**: el `lod0` no tiene cristales aparte (van en la carrocería): el `lodglass` se sustituye por una
+  pieza vacía (0 triángulos) para que no salgan cristales dobles. Shelby67: dos piezas de detalles en `lod1`;
+  la grande lleva todo y la otra queda vacía.
+- **Pegatinas tapadas**: los detalles del `lod0` (pilotos, logos) están en el mismo plano que la chapa; en carrera
+  el juego dibuja los detalles antes que la carrocería y esta los tapaba. Se separan 1 cm hacia fuera (por sus
+  normales) los detalles y los cristales.
+- Carrocería de `lod1` subdividida una vez (aristas de más de 35° vivas); de lejos sin subdividir. VERIFICADO en
+  carrera: 18.294 polígonos por fotograma como mucho (límite 65.536); Camaro con su logo lateral y la trasera con
+  paragolpes y huecos de pilotos (la DS: un bloque liso), Hummer con todos sus detalles.
+- Resultado: 379 piezas + 4 vacías para 34 coches; 5 piezas compartidas entre coches se dejan. Tarda ~4 minutos.
+- Copia del estado anterior: `<modelos>\reemplazos_original` (para volver atrás, copiarla sobre `reemplazos`).
+- Pendiente: los pilotos traseros se ven oscuros cuando la trasera queda a la sombra (iluminación del juego);
+  sin comprobar en el resto de pistas.

@@ -82,7 +82,9 @@ Ejecuta `jugar.cmd`. Primero sale el menú: elige la carpeta del juego, la calid
 | Retroceso | Select | | F7 / F8 | Barniz / resplandor |
 | Ratón | Pantalla táctil | | F9 | Gráfica o procesador |
 
-Para que los coches lejanos se vean con el modelo de carrera, una vez: `.venv\Scripts\python.exe tools\models\upgrade_lods.py`.
+Para que los coches se vean con el modelo de garaje (más detallado) en carrera y de lejos, una vez:
+`.venv\Scripts\python.exe tools\models\upgrade_lods.py` y luego `.venv\Scripts\python.exe tools\models\upgrade_cars.py`
+(necesita Blender 5.2; tarda unos 4 minutos).
 
 Las opciones se guardan en `opciones.ini`, junto a la partida guardada (`nfs_nitro.sav`).
 
