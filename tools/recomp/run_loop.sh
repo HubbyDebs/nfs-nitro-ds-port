@@ -1,8 +1,8 @@
 #!/bin/sh
 # Arranca el juego recompilado; si se para por una funcion sin traducir, recompila y repite.
 # Uso: sh tools/recomp/run_loop.sh [veces]
-PROJECT=/c/Users/jj/nfs-nitro-port
-BUILD=/c/Users/jj/nfs-nitro-build/game
+PROJECT=$(cd "$(dirname "$0")/../.." && pwd)
+BUILD=${NFS_BUILD:-$HOME/nfs-nitro-build/game}
 N=${1:-12}
 i=0
 while [ $i -lt $N ]; do

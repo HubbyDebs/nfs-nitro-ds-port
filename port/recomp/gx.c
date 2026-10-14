@@ -745,7 +745,9 @@ static void request_load(Repl *r) {
 }
 
 static void textures_init(void) {
-    tex_dir = getenv("NFS_TEXTURES") ? getenv("NFS_TEXTURES") : "C:/Users/jj/nfs-nitro-textures";
+    static char def_tex[512];
+    snprintf(def_tex, sizeof def_tex, "%s/nfs-nitro-textures", getenv("USERPROFILE") ? getenv("USERPROFILE") : ".");
+    tex_dir = getenv("NFS_TEXTURES") ? getenv("NFS_TEXTURES") : def_tex;
     tex_dump = getenv("NFS_TEXDUMP") != 0;
     tex_use = !getenv("NFS_TEXPACK") || atoi(getenv("NFS_TEXPACK")) != 0;
     if (tex_dump) dumped = calloc(DUMPED_SLOTS, sizeof(uint64_t));
@@ -1747,7 +1749,7 @@ static void command(uint32_t cmd, const uint32_t *p) {
  * textura, normal (piezas con luz) o color (piezas sin luz).
  *
  * Los sustitutos son archivos <huella>.nmesh en <carpeta de modelos>\reemplazos (por defecto
- * C:\Users\jj\nfs-nitro-models; NFS_MODELS cambia la carpeta, NFS_MESHES=0 los apaga). Los genera
+ * %USERPROFILE%\nfs-nitro-models; NFS_MODELS cambia la carpeta, NFS_MESHES=0 los apaga). Los genera
  * tools/models/make_replacement.py a partir de un OBJ exportado de Blender. */
 typedef struct MeshVtx {
     int32_t x, y, z;          /* en las unidades de la lista original, coma fija 20.12 */
@@ -1771,7 +1773,9 @@ static void meshes_init(void) {
     const char *e = getenv("NFS_MESHES");
     meshes_on = !(e && !strcmp(e, "0"));
     if (!meshes_on) return;
-    const char *dir = getenv("NFS_MODELS") ? getenv("NFS_MODELS") : "C:/Users/jj/nfs-nitro-models";
+    static char def_dir[512];
+    snprintf(def_dir, sizeof def_dir, "%s/nfs-nitro-models", getenv("USERPROFILE") ? getenv("USERPROFILE") : ".");
+    const char *dir = getenv("NFS_MODELS") ? getenv("NFS_MODELS") : def_dir;
     char pattern[600], path[700];
     snprintf(pattern, sizeof pattern, "%s/reemplazos/*.nmesh", dir);
     WIN32_FIND_DATAA fd;

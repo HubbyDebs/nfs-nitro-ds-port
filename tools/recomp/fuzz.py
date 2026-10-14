@@ -26,7 +26,7 @@ from recomp import Func, Image, Translator, load_functions, load_images
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(os.path.dirname(HERE))
 RT = os.path.join(PROJECT, 'port', 'recomp')
-CLANG = r'C:\Users\jj\nfs-nitro-tools\llvm-mingw-20261006-ucrt-x86_64\bin\clang.exe'
+CLANG = os.environ.get('NFS_CLANG') or (sorted(__import__('glob').glob(os.path.expanduser(r'~\nfs-nitro-tools\llvm-mingw-*\bin\clang.exe'))) or ['clang'])[-1]
 
 BASE = 0x02000000
 WIN_LO = 0x021F8000   # ventana de memoria de datos para las pruebas
@@ -84,7 +84,7 @@ def collect(rom, csvs, limits, rng):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--rom', default=r'C:\nfs')
-    ap.add_argument('--build', default=r'C:\Users\jj\nfs-nitro-build\fuzz')
+    ap.add_argument('--build', default=os.path.expanduser(r'~\nfs-nitro-build\fuzz'))
     ap.add_argument('--arm', type=int, default=30000)
     ap.add_argument('--thumb', type=int, default=30000)
     ap.add_argument('--seed', type=int, default=1)

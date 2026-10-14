@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
+#include <shlobj.h>
 
 #define INI_FILE "opciones.ini"
 #define MAX_ITEMS 10
@@ -94,7 +95,12 @@ static HWND preset_ctl;
 static int result = -1;
 
 /* ---- opciones.ini -------------------------------------------------------------------------- */
-static const char *ini_value(char lines[][128], int n, const char *key) {
+/* Carpeta del juego (la ROM extraida con ndstool): argumento del programa, opciones.ini o C:\nfs */
+static char rom_dir[MAX_PATH * 2] = "C:\\nfs";
+static HWND rom_edit;
+#define ID_ROM_BROWSE 401
+
+static const char *ini_value(char lines[][600], int n, const char *key) {
     size_t k = strlen(key);
     for (int i = 0; i < n; i++)
         if (!strncmp(lines[i], key, k) && lines[i][k] == '=') return lines[i] + k + 1;
@@ -102,7 +108,7 @@ static const char *ini_value(char lines[][128], int n, const char *key) {
 }
 
 static void load_options(void) {
-    static char lines[64][128];
+    static char lines[64][600];
     int n = 0;
     FILE *f = fopen(INI_FILE, "r");
     if (f) {
@@ -112,6 +118,8 @@ static void load_options(void) {
         }
         fclose(f);
     }
+    const char *rom = getenv("NFS_ROM") ? getenv("NFS_ROM") : ini_value(lines, n, "NFS_ROM");
+    if (rom && *rom) snprintf(rom_dir, sizeof rom_dir, "%s", rom);
     for (int c = 0; c < N_COMBOS; c++) {
         Combo *o = &combos[c];
         const char *v = getenv(o->env) ? getenv(o->env) : ini_value(lines, n, o->env);
@@ -130,6 +138,8 @@ static void load_options(void) {
 static void save_and_apply(void) {
     FILE *f = fopen(INI_FILE, "w");
     if (f) fprintf(f, "# Opciones del port de NFS Nitro (las cambia el menu del principio)\n");
+    _putenv_s("NFS_ROM", rom_dir);
+    if (f) fprintf(f, "NFS_ROM=%s\n", rom_dir);
     for (int c = 0; c < N_COMBOS; c++) {
         Combo *o = &combos[c];
         const char *v = o->values[o->sel];
@@ -222,7 +232,32 @@ static LRESULT CALLBACK menu_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_COMMAND: {
         int id = LOWORD(wp), code = HIWORD(wp);
-        if (id == ID_PLAY) { read_values(); result = 1; DestroyWindow(h); }
+        if (id == ID_PLAY) {
+            wchar_t w[MAX_PATH * 2];
+            GetWindowTextW(rom_edit, w, MAX_PATH * 2);
+            WideCharToMultiByte(CP_ACP, 0, w, -1, rom_dir, sizeof rom_dir, 0, 0);
+            char probe[MAX_PATH * 2 + 16];
+            snprintf(probe, sizeof probe, "%s\\arm9.bin", rom_dir);
+            if (GetFileAttributesA(probe) == INVALID_FILE_ATTRIBUTES) {
+                MessageBoxW(h, L"En esa carpeta no está el juego extraído (falta arm9.bin).\n\n"
+                               L"Elige la carpeta donde extrajiste la ROM con ndstool: la que tiene arm9.bin, "
+                               L"header.bin y las carpetas data y overlay.", L"Carpeta del juego", MB_ICONWARNING);
+                return 0;
+            }
+            read_values(); result = 1; DestroyWindow(h);
+        }
+        else if (id == ID_ROM_BROWSE) {
+            BROWSEINFOW bi = {0};
+            bi.hwndOwner = h;
+            bi.lpszTitle = L"Carpeta del juego extraído (la que tiene arm9.bin, data y overlay)";
+            bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+            PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+            if (pidl) {
+                wchar_t w[MAX_PATH];
+                if (SHGetPathFromIDListW(pidl, w)) SetWindowTextW(rom_edit, w);
+                CoTaskMemFree(pidl);
+            }
+        }
         else if (id == ID_QUIT) { result = 0; DestroyWindow(h); }
         else if (id == ID_PRESET && code == CBN_SELCHANGE) {
             int p = (int)SendMessageW(preset_ctl, CB_GETCURSEL, 0, 0);
@@ -268,7 +303,7 @@ int launcher_menu(void) {
 
     const int CW = 600, M = 24, LW = 210, row = 36;
     int y = 18;
-    int ch = 18 + 34 + 30 + row + 14 + N_COMBOS * row + 34 + N_CHECKS * 28 + 16 + 40 + 20 + 34 + 20;
+    int ch = 18 + 34 + 30 + row + row + 14 + N_COMBOS * row + 34 + N_CHECKS * 28 + 16 + 40 + 20 + 34 + 20;
     DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
     RECT r = {0, 0, CW, ch};
     AdjustWindowRect(&r, style, FALSE);
@@ -282,6 +317,16 @@ int launcher_menu(void) {
     add(win, L"STATIC", L"Elige la pantalla y las mejoras gráficas. Se guardan para la próxima vez.", 0, M, y,
         CW - 2 * M, 22, 0, font_small);
     y += 30;
+    { /* carpeta del juego */
+        wchar_t w[MAX_PATH * 2];
+        MultiByteToWideChar(CP_ACP, 0, rom_dir, -1, w, MAX_PATH * 2);
+        add(win, L"STATIC", L"Carpeta del juego", 0, M, y + 4, LW, 22, 0, font_head);
+        rom_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", w, WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                   M + LW, y, CW - 2 * M - LW - 100, 28, win, (HMENU)(INT_PTR)400, GetModuleHandleW(0), 0);
+        SendMessageW(rom_edit, WM_SETFONT, (WPARAM)font, TRUE);
+        add(win, L"BUTTON", L"Buscar…", WS_TABSTOP, CW - M - 92, y, 92, 28, ID_ROM_BROWSE, font);
+        y += row;
+    }
     add(win, L"STATIC", L"Calidad gráfica", 0, M, y + 3, LW, 24, 0, font_head);
     preset_ctl = add(win, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, M + LW, y, CW - 2 * M - LW, 300,
                      ID_PRESET, font);

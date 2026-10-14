@@ -9,6 +9,7 @@ import argparse
 import concurrent.futures
 import glob
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -16,7 +17,15 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(os.path.dirname(HERE))
 RT = os.path.join(PROJECT, 'port', 'recomp')
-CLANG = r'C:\Users\jj\nfs-nitro-tools\llvm-mingw-20261006-ucrt-x86_64\bin\clang.exe'
+def find_clang():
+    """clang de llvm-mingw: NFS_CLANG, o el primero en ~/nfs-nitro-tools/llvm-mingw-*, o el del PATH"""
+    if os.environ.get('NFS_CLANG'):
+        return os.environ['NFS_CLANG']
+    found = sorted(glob.glob(os.path.expanduser(r'~\nfs-nitro-tools\llvm-mingw-*\bin\clang.exe')))
+    return found[-1] if found else (shutil.which('clang') or 'clang')
+
+
+CLANG = find_clang()
 
 # Funciones del juego/SDK con sustituto nativo en port/recomp/hle.c
 HLE = [
@@ -47,7 +56,7 @@ RUNTIME = ['rt.c', 'io.c', 'hle.c', 'threads.c', 'irq.c', 'arm7.c', 'interp.c', 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--rom', default=r'C:\nfs')
-    ap.add_argument('--build', default=r'C:\Users\jj\nfs-nitro-build\game')
+    ap.add_argument('--build', default=os.path.expanduser(r'~\nfs-nitro-build\game'))
     ap.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 2) - 2))
     args = ap.parse_args()
 
@@ -101,7 +110,7 @@ def main():
 
     objs = sorted(glob.glob(os.path.join(args.build, '*.o')))
     exe = os.path.join(args.build, 'nfs_boot.exe')
-    subprocess.check_call([CLANG, '-o', exe] + objs + ['-lgdi32', '-luser32', '-lopengl32', '-lm'])
+    subprocess.check_call([CLANG, '-o', exe] + objs + ['-lgdi32', '-luser32', '-lopengl32', '-lshell32', '-lole32', '-lm'])
     print(f"compilados {len(jobs)} archivos, enlazado {exe} en {time.time() - t0:.0f} s")
 
 

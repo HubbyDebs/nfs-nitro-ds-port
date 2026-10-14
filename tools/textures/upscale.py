@@ -29,7 +29,7 @@ import subprocess
 import numpy as np
 from PIL import Image
 
-ESRGAN = r'C:\Users\jj\nfs-nitro-tools\realesrgan\realesrgan-ncnn-vulkan.exe'
+ESRGAN = os.environ.get('NFS_ESRGAN', os.path.expanduser(r'~\nfs-nitro-tools\realesrgan\realesrgan-ncnn-vulkan.exe'))
 PAD = 8
 SCALE = 4
 
@@ -110,7 +110,7 @@ def read_list(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--dir', default=r'C:\Users\jj\nfs-nitro-textures')
+    ap.add_argument('--dir', default=os.environ.get('NFS_TEXTURES', os.path.expanduser(r'~\nfs-nitro-textures')))
     ap.add_argument('--model', default='realesrgan-x4plus')
     ap.add_argument('--car-model', default='realesrgan-x4plus-anime',
                     help='modelo para las texturas de coches (lista coches.txt que apunta el juego)')

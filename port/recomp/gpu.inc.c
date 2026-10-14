@@ -742,8 +742,10 @@ static void gpu_render_frame(void) {
     gpu_have_prev = 1;
     static int frames;
     if (getenv("NFS_GPU_LOG") && ++frames % 300 == 0) {
-        fprintf(stderr, "[gpu] media de 300: vertices %.2f ms, ordenes %.2f, espera+lectura %.2f, conversion %.2f | texturas %.2f, resplandor %.2f | %d poligonos%c",
-                gpu_t[0] / 300, gpu_t[1] / 300, gpu_t[2] / 300, gpu_t[3] / 300, gpu_t[4] / 300, gpu_t[5] / 300, poly_count, 10);
+        extern int perf_meshes;
+        fprintf(stderr, "[gpu] media de 300: vertices %.2f ms, ordenes %.2f, espera+lectura %.2f, conversion %.2f | texturas %.2f, resplandor %.2f | %d poligonos, %d piezas sustituidas%c",
+                gpu_t[0] / 300, gpu_t[1] / 300, gpu_t[2] / 300, gpu_t[3] / 300, gpu_t[4] / 300, gpu_t[5] / 300, poly_count, perf_meshes, 10);
+        perf_meshes = 0;
         memset(gpu_t, 0, sizeof gpu_t);
     }
     GLenum err = glGetError();

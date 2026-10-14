@@ -45,10 +45,22 @@ static LONG CALLBACK on_crash(EXCEPTION_POINTERS *e) {
 int launcher_menu(void); /* menu.c */
 
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "uso: nfs_boot CARPETA_ROM\n"); return 1; }
+    /* Carpeta del juego: el argumento (si lo hay) manda; el menu la deja en NFS_ROM (y la recuerda) */
+    if (argc >= 2) _putenv_s("NFS_ROM", argv[1]);
     /* Menu de opciones antes de empezar (no en las pruebas automaticas) */
     if (!getenv("NFS_HEADLESS") && !getenv("NFS_NOMENU") && !launcher_menu()) return 0;
-    g_rom_dir = argv[1];
+    g_rom_dir = getenv("NFS_ROM") && *getenv("NFS_ROM") ? getenv("NFS_ROM") : "C:\\nfs";
+    {
+        char probe[1100];
+        snprintf(probe, sizeof probe, "%s/arm9.bin", g_rom_dir);
+        if (GetFileAttributesA(probe) == INVALID_FILE_ATTRIBUTES) {
+            fprintf(stderr, "no se encuentra el juego en %s (falta arm9.bin)\n", g_rom_dir);
+            if (!getenv("NFS_HEADLESS"))
+                MessageBoxA(0, "No se encuentra el juego extraido (falta arm9.bin).\nAbre el juego otra vez y elige la carpeta en el menu.",
+                            "NFS Nitro", MB_ICONERROR);
+            return 1;
+        }
+    }
     setvbuf(stdout, 0, _IONBF, 0);
     AddVectoredExceptionHandler(1, on_crash);
     rt_init();

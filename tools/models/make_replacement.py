@@ -76,7 +76,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('obj')
     ap.add_argument('--info', default=None)
-    ap.add_argument('--out', default=r'C:\Users\jj\nfs-nitro-models\reemplazos')
+    ap.add_argument('--out', default=os.path.join(os.environ.get('NFS_MODELS', os.path.expanduser(r'~\nfs-nitro-models')), 'reemplazos'))
     ap.add_argument('--runtime-subdiv', choices=['auto', 'si', 'no'], default='auto',
                     help='si el port debe subdividir ademas la pieza (auto: solo si no viene ya muy subdividida)')
     args = ap.parse_args()

@@ -108,7 +108,7 @@ def main():
     if not files:
         sys.exit('no hay .nsbmd en ' + args.path)
     folder = os.path.dirname(files[0]) if files[0].lower() == want else args.path
-    out_dir = args.out or os.path.join(r'C:\Users\jj\nfs-nitro-models', os.path.basename(folder.rstrip('/')))
+    out_dir = args.out or os.path.join(os.path.expanduser(r'~\nfs-nitro-models'), os.path.basename(folder.rstrip('/')))
     os.makedirs(out_dir, exist_ok=True)
     # texturas de toda la carpeta, por si un modelo usa las de otro archivo
     shared = {}
