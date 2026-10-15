@@ -696,3 +696,16 @@ cielo raro. Captura `Capturaug 2.PNG`.
   `blender_batch.py` fija ahora los vértices de los bordes abiertos (pliegue de vértice 1) y
   `boundary_smooth = PRESERVE_CORNERS`. VERIFICADO en Blender (huecos idénticos al original) y en carrera con el
   Corolla. Regenerado con `upgrade_cars.py`.
+
+### 120 fps: píxeles que "se movían" (2026-10-15)
+Medido con `flicker.py` (fuera del proyecto): píxeles donde la imagen real anterior y la actual casi no cambian
+(<6) pero la intermedia se aparta (>20), en la zona del coche (que la cámara sigue). Antes 0,293 %; ahora 0,029 %
+(una intermedia sin mover nada da 0,043 %). Cambios:
+- Las piezas ambiguas (con reflejo, o con la misma coordenada de textura en todos sus vértices: cristales, piezas
+  sin textura) solo se emparejan si se han movido menos de 4 píxeles; antes cogían otro triángulo del mismo
+  cristal y tapaban el marco. Probado y descartado: elegir el más cercano (0,71-0,74 %, desordena el emparejado).
+- Las piezas emparejadas usan su propio movimiento; la tabla de vértices compartidos solo para las que no tienen
+  pareja (con ella para todas: 0,29 %; sin ella: 0,20 %).
+- La intermedia refleja en la pintura la misma imagen anterior que la imagen real, y la luz y los reflejos usan
+  normales y posiciones a medio camino.
+Herramientas: `NFS_FPS120_DEBUG=fotograma`, `NFS_FPS120_LOGALL`.

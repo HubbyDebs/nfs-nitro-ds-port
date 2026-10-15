@@ -685,11 +685,14 @@ static void gpu_render_frame(void) {
     glUniform1i(U("u_tex"), 0);
     glUniform1i(U("u_prev"), 1);
     glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, gpu_res_tex[gpu_res_cur ^ 1]);
+    /* imagen anterior para el reflejo. La intermedia se dibuja despues de la actual (ya alternadas): usa la misma
+     * que uso la actual, si no el brillo de la pintura cambiaba entre una y otra (pixeles que "se movian" a 120) */
+    int prev_img = gpu_dst == 2 ? gpu_res_cur : gpu_res_cur ^ 1;
+    glBindTexture(GL_TEXTURE_2D, gpu_res_tex[prev_img]);
     glBindSampler(1, 0);
     glUniform1i(U("u_prevdep"), 2);
     glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, gpu_res_dep[gpu_res_cur ^ 1]);
+    glBindTexture(GL_TEXTURE_2D, gpu_res_dep[prev_img]);
     glBindSampler(2, 0);
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(U("u_has_prev"), gpu_have_prev && ds->shiny);
@@ -907,6 +910,7 @@ typedef struct PrevPoly {
     int n;
     float cx, cy;
     float pos[10][4];
+    float ext[10][9]; /* normal, posicion en la camara y normal del modelo: la luz y los reflejos tambien a medio camino */
     float uv[10][2];
     int env;
 } PrevPoly;
@@ -955,11 +959,12 @@ static void gpu_interp_frame(void) {
     double ti0 = gpu_now();
     gpu_interp_ready = 0;
     if (!video_fps120() || !win_gpu_present) { gpu_prev_count = 0; return; }
-    static float (*saved)[10][4];
+    static float (*saved)[10][4], (*saved_ext)[10][9];
     static int *match, saved_cap;
     if (saved_cap < poly_count) {
         saved_cap = poly_count + 4096;
         saved = realloc(saved, sizeof(*saved) * saved_cap);
+        saved_ext = realloc(saved_ext, sizeof(*saved_ext) * saved_cap);
         match = realloc(match, sizeof(int) * saved_cap);
     }
     if (!gpu_vmap) gpu_vmap = calloc((size_t)1 << VMAP_BITS, sizeof(VDelta));
@@ -971,9 +976,22 @@ static void gpu_interp_frame(void) {
          * con el de al lado, que es igual: la textura "resbalaba") y cada vertice a menos de 16 pixeles de la consola.
          * Antes se cogia el mas cercano, y en tramos repetidos solia ser el vecino. */
         int j = 0;
+        static int dbg_frame = -1; /* NFS_FPS120_DEBUG=fotograma: por que no tienen pareja */
+        if (dbg_frame < 0) dbg_frame = getenv("NFS_FPS120_DEBUG") ? atoi(getenv("NFS_FPS120_DEBUG")) : 0;
         for (int i = 0; i < poly_count; i++) {
             const Poly *p = &polys[i];
             match[i] = -1;
+            /* ambigua: con reflejo, o con la misma coordenada de textura en todos sus vertices (cristales, piezas sin
+             * textura): la textura no la distingue de sus vecinas. Esas solo se emparejan si casi no se han movido
+             * (4 pixeles); si no, se mueven con sus vecinas. Antes cogian otro triangulo del mismo cristal y tapaban
+             * el marco (pixeles que "se movian" en el coche). */
+            int ambiguous = p->env;
+            if (!ambiguous) {
+                ambiguous = 1;
+                for (int v = 1; v < p->n; v++)
+                    if (fabsf(p->v[v].s - p->v[0].s) > 0.01f || fabsf(p->v[v].t - p->v[0].t) > 0.01f) ambiguous = 0;
+            }
+            float limit = ambiguous ? 4.0f : 16.0f;
             for (int step = 0; step < 72; step++) {
                 int k = step < 64 ? j + step : j - (step - 63);
                 if (k < 0 || k >= gpu_prev_count) continue;
@@ -981,12 +999,31 @@ static void gpu_interp_frame(void) {
                 if (q->attr != p->attr || q->tex != p->tex || q->pal != p->pal || q->n != p->n || q->env != p->env) continue;
                 int ok = 1;
                 for (int v = 0; v < p->n && ok; v++) {
-                    if (fabsf(q->pos[v][0] - p->v[v].x) + fabsf(q->pos[v][1] - p->v[v].y) > 16) ok = 0;
+                    if (fabsf(q->pos[v][0] - p->v[v].x) + fabsf(q->pos[v][1] - p->v[v].y) > limit) ok = 0;
                     else if (!p->env && (fabsf(q->uv[v][0] - p->v[v].s) > 0.5f || fabsf(q->uv[v][1] - p->v[v].t) > 0.5f)) ok = 0;
                 }
                 if (ok) { match[i] = k; break; }
             }
             if (match[i] >= 0) { j = match[i] + 1; matched++; }
+            else if (dbg_frame && g_frame == (uint32_t)dbg_frame) {
+                /* depuracion: por que no tiene pareja (el candidato mas cercano con la misma clave) */
+                float bd = 1e9f, buv = 0; int bk = -1, same = 0;
+                for (int k = 0; k < gpu_prev_count; k++) {
+                    const PrevPoly *q = &gpu_prev_polys[k];
+                    if (q->attr != p->attr || q->tex != p->tex || q->pal != p->pal || q->n != p->n || q->env != p->env) continue;
+                    same++;
+                    float w = 0, wu = 0;
+                    for (int v = 0; v < p->n; v++) {
+                        float dv = fabsf(q->pos[v][0] - p->v[v].x) + fabsf(q->pos[v][1] - p->v[v].y);
+                        float du = fabsf(q->uv[v][0] - p->v[v].s) + fabsf(q->uv[v][1] - p->v[v].t);
+                        if (dv > w) w = dv;
+                        if (du > wu) wu = du;
+                    }
+                    if (w < bd) { bd = w; bk = k; buv = wu; }
+                }
+                fprintf(stderr, "[120 sin pareja] %d n %d env %d attr %08x tex %08x centro (%.0f,%.0f) | %d con la misma clave, el mas cercano %d (indice %+d): %.1f px, uv %.2f%c",
+                        i, p->n, p->env, p->attr, p->tex, p->v[0].x, p->v[0].y, same, bk, bk - j, bd, buv, 10);
+            }
         }
         gpu_interp_t[0] += gpu_now() - ti0;
         if (matched > poly_count / 4) { /* hay bastante en comun (no es un cambio de escena) */
@@ -1010,14 +1047,27 @@ static void gpu_interp_frame(void) {
                 int have[10], nh = 0;
                 for (int k = 0; k < p->n; k++) {
                     saved[i][k][0] = p->v[k].x; saved[i][k][1] = p->v[k].y; saved[i][k][2] = p->v[k].z; saved[i][k][3] = p->v[k].w;
-                    const VDelta *e = vmap_find(&p->v[k], 0);
-                    have[k] = e && e->has;
-                    if (have[k]) { memcpy(d[k], e->d, sizeof d[k]); for (int c = 0; c < 4; c++) avg[c] += e->d[c]; nh++; }
-                    else if (match[i] >= 0) {
+                    float *se = saved_ext[i][k];
+                    se[0] = p->v[k].nx; se[1] = p->v[k].ny; se[2] = p->v[k].nz; se[3] = p->v[k].vx; se[4] = p->v[k].vy;
+                    se[5] = p->v[k].vz; se[6] = p->v[k].mx; se[7] = p->v[k].my; se[8] = p->v[k].mz;
+                    if (match[i] >= 0) { /* emparejado: normales y posicion en la camara a medio camino */
+                        const float *qe = gpu_prev_polys[match[i]].ext[k];
+                        p->v[k].nx = (se[0] + qe[0]) * 0.5f; p->v[k].ny = (se[1] + qe[1]) * 0.5f; p->v[k].nz = (se[2] + qe[2]) * 0.5f;
+                        p->v[k].vx = (se[3] + qe[3]) * 0.5f; p->v[k].vy = (se[4] + qe[4]) * 0.5f; p->v[k].vz = (se[5] + qe[5]) * 0.5f;
+                        p->v[k].mx = (se[6] + qe[6]) * 0.5f; p->v[k].my = (se[7] + qe[7]) * 0.5f; p->v[k].mz = (se[8] + qe[8]) * 0.5f;
+                    }
+                    /* emparejado: su propio movimiento (medido: la tabla de vertices compartidos movia mal algunos
+                     * vertices de piezas emparejadas, 0,29 % de pixeles parpadeando frente a 0,20 %); sin pareja: el de
+                     * un vertice igual de otra pieza (asi no se abren rendijas), y si no, lo que se mueven sus vecinos */
+                    have[k] = 0;
+                    if (match[i] >= 0) {
                         const PrevPoly *q = &gpu_prev_polys[match[i]];
                         d[k][0] = q->pos[k][0] - p->v[k].x; d[k][1] = q->pos[k][1] - p->v[k].y;
                         d[k][2] = q->pos[k][2] - p->v[k].z; d[k][3] = q->pos[k][3] - p->v[k].w;
                         have[k] = 1;
+                    } else {
+                        const VDelta *e = vmap_find(&p->v[k], 0);
+                        if (e && e->has) { memcpy(d[k], e->d, sizeof d[k]); for (int c = 0; c < 4; c++) avg[c] += e->d[c]; nh++; have[k] = 1; }
                     }
                 }
                 if (nh) for (int c = 0; c < 4; c++) avg[c] /= nh;
@@ -1035,12 +1085,15 @@ static void gpu_interp_frame(void) {
                 Poly *p = &polys[i];
                 for (int k = 0; k < p->n; k++) {
                     p->v[k].x = saved[i][k][0]; p->v[k].y = saved[i][k][1]; p->v[k].z = saved[i][k][2]; p->v[k].w = saved[i][k][3];
+                    const float *se = saved_ext[i][k];
+                    p->v[k].nx = se[0]; p->v[k].ny = se[1]; p->v[k].nz = se[2]; p->v[k].vx = se[3]; p->v[k].vy = se[4];
+                    p->v[k].vz = se[5]; p->v[k].mx = se[6]; p->v[k].my = se[7]; p->v[k].mz = se[8];
                 }
             }
             gpu_interp_ready = 1;
         }
     }
-    if (getenv("NFS_FPS120_LOG") && g_frame % 120 == 0) {
+    if (getenv("NFS_FPS120_LOG") && g_frame % (getenv("NFS_FPS120_LOGALL") ? 1 : 120) == 0) {
         fprintf(stderr, "[120] fotograma %u: %d de %d poligonos emparejados%s | ms por imagen: emparejar+mover %.2f, dibujar %.2f%c", g_frame, matched, poly_count,
                 gpu_interp_ready ? "" : " (sin imagen intermedia)", gpu_interp_t[0] / 120, gpu_interp_t[1] / 120, 10);
         gpu_interp_t[0] = gpu_interp_t[1] = 0;
@@ -1056,7 +1109,12 @@ static void gpu_interp_frame(void) {
         q->attr = p->attr; q->tex = p->tex; q->pal = p->pal; q->n = p->n; q->env = p->env;
         poly_center(p, &q->cx, &q->cy);
         for (int k = 0; k < p->n; k++) { q->uv[k][0] = p->v[k].s; q->uv[k][1] = p->v[k].t; }
-        for (int k = 0; k < p->n; k++) { q->pos[k][0] = p->v[k].x; q->pos[k][1] = p->v[k].y; q->pos[k][2] = p->v[k].z; q->pos[k][3] = p->v[k].w; }
+        for (int k = 0; k < p->n; k++) {
+            q->pos[k][0] = p->v[k].x; q->pos[k][1] = p->v[k].y; q->pos[k][2] = p->v[k].z; q->pos[k][3] = p->v[k].w;
+            float *e = q->ext[k];
+            e[0] = p->v[k].nx; e[1] = p->v[k].ny; e[2] = p->v[k].nz; e[3] = p->v[k].vx; e[4] = p->v[k].vy;
+            e[5] = p->v[k].vz; e[6] = p->v[k].mx; e[7] = p->v[k].my; e[8] = p->v[k].mz;
+        }
     }
     gpu_prev_count = poly_count;
 }
