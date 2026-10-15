@@ -454,6 +454,16 @@ static void fx_log(const Engine *e) { /* que efectos 2D pide el juego de verdad 
 }
 
 /* Junta las capas 2D de un motor en back2d/front2d/... (a 256x192). Dice si el 3D va en medio. */
+/* NFS_NO_WHITE_FLASH (opcion del menu, activada): en carrera (el motor principal muestra el 3D) no se hacen los
+ * fundidos y destellos a blanco del brillo maestro. El juego blanquea toda la pantalla al empezar la carrera (de 16
+ * a 0 en unas 47 imagenes, VERIFICADO con NFS_BRIGHT_LOG) y en otros momentos; en la DS es igual, pero en una
+ * pantalla grande al usuario le parecia un fallo. Los fundidos a negro y los de los menus se quedan. */
+int video_no_white_flash(void);
+static int no_white_flash(void) {
+    const uint8_t *r = io_mem(0);
+    return video_no_white_flash() && (r[0] & 8);
+}
+
 static void build_engine(Engine *e, int *has_3d_out, int *fx_3d_out, BlendRegs *br_out) {
     uint32_t dispcnt = rd32(e->reg);
     fx_log(e);
@@ -515,6 +525,7 @@ static void render_engine(Engine *e, uint32_t *buf, int S) {
     /* Brillo maestro: fundidos a blanco o a negro */
     uint32_t bright = rd16(e->reg + 0x6C);
     int mode = bright >> 14, factor = bright & 31;
+    if (mode == 1 && no_white_flash()) factor = 0;
     if (factor > 16) factor = 16;
     if ((mode == 1 || mode == 2) && factor) {
         for (int i = 0; i < total; i++) {
@@ -550,6 +561,7 @@ static void pack_screen(int k, Engine *e, GpuScreen *g) {
     g->back = scr_back[k]; g->front = scr_front[k]; g->raw = scr_raw[k]; g->ids = scr_ids[k];
     g->use3d = has_3d; g->fx3d = fx_3d; g->cnt = (int)br.cnt; g->eva = br.eva; g->evb = br.evb;
     g->bright_mode = bright >> 14; g->bright_factor = (bright & 31) > 16 ? 16 : (bright & 31);
+    if (g->bright_mode == 1 && no_white_flash()) g->bright_factor = 0;
 }
 
 static GpuScreen last_ga, last_gb; /* el 2D de la ultima vez (con 120 fps se pinta dos veces el mismo) */

@@ -33,6 +33,7 @@
  *   NFS_SHARP=n        texturas de lejos: 1 = nitidas sin parpadeo (anisotropico x16; por defecto),
  *                      0 = mas suaves, 2 = sin reducciones (lo mas nitido, el suelo lejano parpadea)
  *   NFS_FPS120=1       120 imagenes por segundo: una intermedia entre cada dos del juego (experimental)
+ *   NFS_NO_WHITE_FLASH=0  deja los destellos y fundidos a blanco del juego en carrera (por defecto se quitan)
  *   NFS_SHINY=0        coches sin barniz (reflejo del cielo, Fresnel y brillos de la pintura)
  *   NFS_SPIKES=ms      apunta los fotogramas que tarden mas de esos milisegundos (tirones)
  *   NFS_HEADLESS=1     sin ventana (para pruebas automaticas)
@@ -56,7 +57,7 @@ void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
 
 /* ---- configuracion ------------------------------------------------------------------------- */
 static int configured, headless, layout, win_scale, internal_scale, filter = 1, shot_every, fullscreen;
-static int fps120, sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
+static int no_flash = 1, fps120, sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
 static uint32_t shot_from, shot_to = 0xFFFFFFFFu;
 
 static int env_int(const char *name, int fallback) { return getenv(name) ? atoi(getenv(name)) : fallback; }
@@ -84,6 +85,7 @@ static void configure(void) {
     if (sharp < 0 || sharp > 2) sharp = 1;
     gpu = env_int("NFS_GPU", 1) != 0;
     fps120 = env_int("NFS_FPS120", 0) != 0;
+    no_flash = env_int("NFS_NO_WHITE_FLASH", 1) != 0;
     msaa = env_int("NFS_MSAA", 4);
     if (tess < 0) tess = 0;
     if (tess > 4) tess = 4;
@@ -136,6 +138,7 @@ int video_shiny(void) { configure(); return shiny; }
 int video_bloom(void) { configure(); return bloom; }
 int video_sharp(void) { configure(); return sharp; }
 static int fps120_skip, interp_shown; /* la imagen anterior fue justa de tiempo: esta sin intermedia (el juego no se frena) */
+int video_no_white_flash(void) { configure(); return no_flash; }
 int video_fps120(void) { configure(); return fps120 && !headless && !fps120_skip; } /* imagen intermedia entre cada dos */ /* menus y marcadores ampliados con bordes suaves */ /* sin mipmaps: texturas nitidas de lejos */
 int video_gpu(void) { configure(); return gpu; }
 int video_msaa(void) { configure(); return msaa; }

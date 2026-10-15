@@ -721,3 +721,9 @@ Herramientas: `NFS_FPS120_DEBUG=fotograma`, `NFS_FPS120_LOGALL`.
   En carrera normal DISP3DCNT=049b (resaltado activado: los polígonos en modo 2 suman la tabla de tonos, gris
   oscuro). HIPÓTESIS: con la X el juego cambia esa tabla o el modo; falta el diagnóstico del usuario.
   `NFS_DIAG_AT=fotograma` lo simula en pruebas.
+- **Causa encontrada (VERIFICADO)**: no era luz ni reflejo. El juego blanquea toda la pantalla con el brillo maestro
+  (MASTER_BRIGHT, modo "aclarar") en los dos motores: al empezar la carrera hace un fundido desde blanco de 16 a 0
+  en unas 47 imágenes (`NFS_BRIGHT_LOG=1` apunta las escrituras), y por lo visto también en otros momentos (la X).
+  La consola lo muestra igual: el port era fiel. Opción nueva `NFS_NO_WHITE_FLASH` (casilla del menú, activada):
+  con el 3D en el motor principal (carrera) no se aplica el aclarado del brillo maestro. Fundidos a negro y menús,
+  sin cambios. VERIFICADO con la captura de la gráfica en "Pulsa el Botón A".
