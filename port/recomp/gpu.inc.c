@@ -108,8 +108,9 @@ static int gpu_bl_w, gpu_bl_h;
 static HDC gpu_dc;
 static HGLRC gpu_ctx;
 static GLuint gpu_prog, gpu_vao, gpu_vbo, gpu_msaa_fbo, gpu_msaa_color, gpu_msaa_depth;
-static GLuint gpu_res_fbo[2], gpu_res_tex[2], gpu_samplers[2][3][3];
+static GLuint gpu_res_fbo[3], gpu_res_tex[3], gpu_samplers[2][3][3];
 static int gpu_res_cur, gpu_samples, gpu_w, gpu_h, gpu_have_prev;
+static int gpu_dst = -1;           /* >= 0: dibujar en esa imagen resuelta (la intermedia) */
 static float *gpu_verts;
 static size_t gpu_verts_cap;
 static uint32_t *gpu_read;
@@ -351,7 +352,7 @@ static void gpu_targets(void) { /* imagenes donde se dibuja, al tamano de la res
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, gpu_msaa_color);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gpu_msaa_depth);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) fprintf(stderr, "[gpu] imagen MSAA incompleta%c", 10);
-    for (int i = 0; i < 2; i++) { /* dos imagenes resueltas que se alternan: la anterior se refleja en la pintura */
+    for (int i = 0; i < 3; i++) { /* dos imagenes resueltas que se alternan (la anterior se refleja en la pintura) y la intermedia (120 fps) */
         glGenTextures(1, &gpu_res_tex[i]);
         glBindTexture(GL_TEXTURE_2D, gpu_res_tex[i]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, gpu_w, gpu_h, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
@@ -799,10 +800,11 @@ static void gpu_render_frame(void) {
     /* resolver el suavizado y leer el resultado */
     double t2 = gpu_now();
     gpu_t[1] += t2 - t1;
+    int dst = gpu_dst >= 0 ? gpu_dst : gpu_res_cur; /* la intermedia (120 fps) va a la tercera imagen */
     LARGE_INTEGER r0, r1, rf;
     QueryPerformanceCounter(&r0);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, gpu_msaa_fbo);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gpu_res_fbo[gpu_res_cur]);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gpu_res_fbo[dst]);
     glBlitFramebuffer(0, 0, gpu_w, gpu_h, 0, 0, gpu_w, gpu_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     gpu_bloom_done = 0;
     if (ds->bloom) { /* resplandor, en la imagen ya resuelta */
@@ -814,7 +816,7 @@ static void gpu_render_frame(void) {
         glViewport(0, 0, gpu_bl_w, gpu_bl_h);
         glBindFramebuffer(GL_FRAMEBUFFER, gpu_bl_fbo[0]);
         glUseProgram(gpu_bl_prog[0]);
-        glBindTexture(GL_TEXTURE_2D, gpu_res_tex[gpu_res_cur]);
+        glBindTexture(GL_TEXTURE_2D, gpu_res_tex[dst]);
         glUniform1i(glGetUniformLocation(gpu_bl_prog[0], "u_src"), 0);
         glUniform2f(glGetUniformLocation(gpu_bl_prog[0], "u_texel"), 1.0f / gpu_w, 1.0f / gpu_h);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -828,7 +830,7 @@ static void gpu_render_frame(void) {
         }
         /* suma solo donde hay 3D: el factor es el alfa de destino */
         glViewport(0, 0, gpu_w, gpu_h);
-        glBindFramebuffer(GL_FRAMEBUFFER, gpu_res_fbo[gpu_res_cur]);
+        glBindFramebuffer(GL_FRAMEBUFFER, gpu_res_fbo[dst]);
         glUseProgram(gpu_bl_prog[2]);
         glBindTexture(GL_TEXTURE_2D, gpu_bl_tex[0]);
         glUniform1i(glGetUniformLocation(gpu_bl_prog[2], "u_src"), 0);
@@ -840,18 +842,19 @@ static void gpu_render_frame(void) {
         gpu_bloom_done = 1;
     }
     double t3 = t2;
-    if (!win_gpu_present) { /* la mezcla con el 2D la hace el procesador: hay que traer la imagen */
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, gpu_res_fbo[gpu_res_cur]);
+    if (!win_gpu_present && gpu_dst < 0) { /* la mezcla con el 2D la hace el procesador: hay que traer la imagen */
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, gpu_res_fbo[dst]);
         glPixelStorei(GL_PACK_ALIGNMENT, 4);
         glReadPixels(0, 0, gpu_w, gpu_h, GL_BGRA, GL_UNSIGNED_BYTE, gpu_read);
         t3 = gpu_now();
         gpu_t[2] += t3 - t2;
     }
-    if (!win_gpu_present) pool_run(gpu_h, gpu_convert_row, 0); /* OpenGL empieza por abajo; se deshace el premultiplicado */
+    if (!win_gpu_present && gpu_dst < 0) pool_run(gpu_h, gpu_convert_row, 0); /* OpenGL empieza por abajo; se deshace el premultiplicado */
     QueryPerformanceCounter(&r1);
     QueryPerformanceFrequency(&rf);
     perf_gpu_read_ms += (double)(r1.QuadPart - r0.QuadPart) * 1000 / (double)rf.QuadPart;
     gpu_t[3] += gpu_now() - t3;
+    if (gpu_dst >= 0) return; /* imagen intermedia: no cambia cual es la anterior */
     gpu_res_cur ^= 1;
     gpu_have_prev = 1;
     static int frames;
@@ -869,6 +872,162 @@ static void gpu_render_frame(void) {
     }
 }
 
+/* ---- 120 imagenes por segundo (NFS_FPS120, experimental) ----------------------------------------------
+ * El juego hace 60 imagenes por segundo. Entre cada dos se dibuja otra intermedia: los poligonos que estan en
+ * las dos (mismo material, mismo numero de vertices, en el mismo orden y cerca) se ponen a medio camino entre
+ * donde estaban y donde estan; los demas (los que aparecen o se recortan distinto en el borde) se quedan como
+ * en la actual. win.c ensena la intermedia y medio periodo despues la actual: 8 ms mas de retraso. */
+typedef struct PrevPoly {
+    uint32_t attr, tex, pal;
+    int n;
+    float cx, cy;
+    float pos[10][4];
+} PrevPoly;
+static PrevPoly *gpu_prev_polys;
+static int gpu_prev_count, gpu_prev_cap, gpu_interp_ready, gpu_present_interp;
+int gpu_interp_pending(void) { return gpu_interp_ready; }
+void gpu_set_present_interp(int on) { gpu_present_interp = on; }
+int video_fps120(void);
+
+static void poly_center(const Poly *p, float *cx, float *cy) {
+    float x = 0, y = 0;
+    for (int k = 0; k < p->n; k++) { x += p->v[k].x; y += p->v[k].y; }
+    *cx = x / p->n; *cy = y / p->n;
+}
+
+/* Desplazamiento de cada vertice (de la imagen actual a la anterior), por su posicion: los poligonos vecinos
+ * comparten vertices, asi se mueven juntos y no se abren rendijas entre los emparejados y los que no */
+#define VMAP_BITS 18
+typedef struct VDelta { int32_t kx, ky, kw; uint32_t gen; int has; float d[4]; } VDelta;
+static VDelta *gpu_vmap;
+static uint32_t gpu_vmap_gen; /* entradas de otra imagen = libres (sin vaciar la tabla cada vez) */
+static uint32_t vkey_hash(int32_t a, int32_t b, int32_t c) {
+    uint32_t h = (uint32_t)a * 73856093u ^ (uint32_t)b * 19349663u ^ (uint32_t)c * 83492791u;
+    return h & ((1u << VMAP_BITS) - 1);
+}
+static void vkey(const Vtx *v, int32_t *a, int32_t *b, int32_t *c) {
+    *a = (int32_t)lrintf(v->x * 64); *b = (int32_t)lrintf(v->y * 64); *c = (int32_t)lrintf(v->w * 4096);
+}
+static VDelta *vmap_find(const Vtx *v, int insert) {
+    int32_t a, b, c;
+    vkey(v, &a, &b, &c);
+    for (uint32_t h = vkey_hash(a, b, c), n = 0; n < 64; h = (h + 1) & ((1u << VMAP_BITS) - 1), n++) {
+        VDelta *e = &gpu_vmap[h];
+        if (e->gen != gpu_vmap_gen) {
+            if (!insert) return 0;
+            e->gen = gpu_vmap_gen; e->has = 0; e->kx = a; e->ky = b; e->kw = c;
+            return e;
+        }
+        if (e->kx == a && e->ky == b && e->kw == c) return e;
+    }
+    return 0;
+}
+
+static double gpu_interp_t[3]; /* emparejar, dibujar, guardar (ms acumulados, para NFS_FPS120_LOG) */
+static void gpu_interp_frame(void) {
+    double ti0 = gpu_now();
+    gpu_interp_ready = 0;
+    if (!video_fps120() || !win_gpu_present) { gpu_prev_count = 0; return; }
+    static float (*saved)[10][4];
+    static int *match, saved_cap;
+    if (saved_cap < poly_count) {
+        saved_cap = poly_count + 4096;
+        saved = realloc(saved, sizeof(*saved) * saved_cap);
+        match = realloc(match, sizeof(int) * saved_cap);
+    }
+    if (!gpu_vmap) gpu_vmap = calloc((size_t)1 << VMAP_BITS, sizeof(VDelta));
+    int matched = 0;
+    if (gpu_prev_count) { /* emparejar con la imagen anterior: en orden, el mas parecido de los cercanos */
+        int j = 0;
+        for (int i = 0; i < poly_count; i++) {
+            const Poly *p = &polys[i];
+            match[i] = -1;
+            float best = 12; /* como mucho 12 pixeles de la consola por vertice */
+            int lo = j - 8 < 0 ? 0 : j - 8;
+            for (int k = lo; k < gpu_prev_count && k < j + 64; k++) {
+                const PrevPoly *q = &gpu_prev_polys[k];
+                if (q->attr != p->attr || q->tex != p->tex || q->pal != p->pal || q->n != p->n) continue;
+                float worst = 0;
+                for (int v = 0; v < p->n && worst < best; v++) {
+                    float d = fabsf(q->pos[v][0] - p->v[v].x) + fabsf(q->pos[v][1] - p->v[v].y);
+                    if (d > worst) worst = d;
+                }
+                if (worst < best) { best = worst; match[i] = k; }
+            }
+            if (match[i] >= 0) { j = match[i] + 1; matched++; }
+        }
+        gpu_interp_t[0] += gpu_now() - ti0;
+        if (matched > poly_count / 4) { /* hay bastante en comun (no es un cambio de escena) */
+            gpu_vmap_gen++;
+            for (int i = 0; i < poly_count; i++) { /* desplazamientos de los vertices de los emparejados */
+                if (match[i] < 0) continue;
+                const Poly *p = &polys[i];
+                const PrevPoly *q = &gpu_prev_polys[match[i]];
+                for (int k = 0; k < p->n; k++) {
+                    VDelta *e = vmap_find(&p->v[k], 1);
+                    if (e && !e->has) {
+                        e->has = 1;
+                        e->d[0] = q->pos[k][0] - p->v[k].x; e->d[1] = q->pos[k][1] - p->v[k].y;
+                        e->d[2] = q->pos[k][2] - p->v[k].z; e->d[3] = q->pos[k][3] - p->v[k].w;
+                    }
+                }
+            }
+            for (int i = 0; i < poly_count; i++) {
+                Poly *p = &polys[i];
+                float d[10][4], avg[4] = {0, 0, 0, 0};
+                int have[10], nh = 0;
+                for (int k = 0; k < p->n; k++) {
+                    saved[i][k][0] = p->v[k].x; saved[i][k][1] = p->v[k].y; saved[i][k][2] = p->v[k].z; saved[i][k][3] = p->v[k].w;
+                    const VDelta *e = vmap_find(&p->v[k], 0);
+                    have[k] = e && e->has;
+                    if (have[k]) { memcpy(d[k], e->d, sizeof d[k]); for (int c = 0; c < 4; c++) avg[c] += e->d[c]; nh++; }
+                    else if (match[i] >= 0) {
+                        const PrevPoly *q = &gpu_prev_polys[match[i]];
+                        d[k][0] = q->pos[k][0] - p->v[k].x; d[k][1] = q->pos[k][1] - p->v[k].y;
+                        d[k][2] = q->pos[k][2] - p->v[k].z; d[k][3] = q->pos[k][3] - p->v[k].w;
+                        have[k] = 1;
+                    }
+                }
+                if (nh) for (int c = 0; c < 4; c++) avg[c] /= nh;
+                for (int k = 0; k < p->n; k++) { /* sin dato propio: lo que se mueven sus vecinos del mismo poligono */
+                    const float *dd = have[k] ? d[k] : avg;
+                    p->v[k].x += dd[0] * 0.5f; p->v[k].y += dd[1] * 0.5f; p->v[k].z += dd[2] * 0.5f; p->v[k].w += dd[3] * 0.5f;
+                }
+            }
+            double ti1 = gpu_now();
+            gpu_dst = 2;
+            gpu_render_frame();
+            gpu_dst = -1;
+            gpu_interp_t[1] += gpu_now() - ti1;
+            for (int i = 0; i < poly_count; i++) {
+                Poly *p = &polys[i];
+                for (int k = 0; k < p->n; k++) {
+                    p->v[k].x = saved[i][k][0]; p->v[k].y = saved[i][k][1]; p->v[k].z = saved[i][k][2]; p->v[k].w = saved[i][k][3];
+                }
+            }
+            gpu_interp_ready = 1;
+        }
+    }
+    if (getenv("NFS_FPS120_LOG") && g_frame % 120 == 0) {
+        fprintf(stderr, "[120] fotograma %u: %d de %d poligonos emparejados%s | ms por imagen: emparejar+mover %.2f, dibujar %.2f%c", g_frame, matched, poly_count,
+                gpu_interp_ready ? "" : " (sin imagen intermedia)", gpu_interp_t[0] / 120, gpu_interp_t[1] / 120, 10);
+        gpu_interp_t[0] = gpu_interp_t[1] = 0;
+    }
+    /* la actual pasa a ser la anterior */
+    if (gpu_prev_cap < poly_count) {
+        gpu_prev_cap = poly_count + 4096;
+        gpu_prev_polys = realloc(gpu_prev_polys, sizeof(PrevPoly) * gpu_prev_cap);
+    }
+    for (int i = 0; i < poly_count; i++) {
+        const Poly *p = &polys[i];
+        PrevPoly *q = &gpu_prev_polys[i];
+        q->attr = p->attr; q->tex = p->tex; q->pal = p->pal; q->n = p->n;
+        poly_center(p, &q->cx, &q->cy);
+        for (int k = 0; k < p->n; k++) { q->pos[k][0] = p->v[k].x; q->pos[k][1] = p->v[k].y; q->pos[k][2] = p->v[k].z; q->pos[k][3] = p->v[k].w; }
+    }
+    gpu_prev_count = poly_count;
+}
+
 /* 1 si se ha dibujado con la grafica; 0 = usar el dibujado por software */
 static int gpu_render(void) {
     gpu_bloom_done = 0;
@@ -880,6 +1039,7 @@ static int gpu_render(void) {
     if (gpu_state < 0) return 0;
     wglMakeCurrent(gpu_dc, gpu_ctx);
     gpu_render_frame();
+    gpu_interp_frame();
     return 1;
 }
 
@@ -911,7 +1071,7 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
     }
     wglMakeCurrent(gpu_win_dc, gpu_ctx);
     /* el 3D recien dibujado; si se reduce (resolucion interna mayor que la de la ventana), con reducciones */
-    GLuint t3d = gpu_res_tex[gpu_res_cur ^ 1];
+    GLuint t3d = gpu_present_interp && gpu_interp_ready ? gpu_res_tex[2] : gpu_res_tex[gpu_res_cur ^ 1];
     glBindTexture(GL_TEXTURE_2D, t3d);
     int reduce = gpu_w > top->w || gpu_h / 2 > top->h;
     if (reduce) glGenerateMipmap(GL_TEXTURE_2D);
@@ -969,7 +1129,7 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
             glReadPixels(0, 0, win_w, win_h, GL_BGRA, GL_UNSIGNED_BYTE, px);
             for (int y = 0; y < win_h; y++) memcpy(fl + (size_t)y * win_w, px + (size_t)(win_h - 1 - y) * win_w, (size_t)win_w * 4);
             char name[64];
-            snprintf(name, sizeof name, "win_%05u.png", g_frame);
+            snprintf(name, sizeof name, "win_%05u%s.png", g_frame, gpu_present_interp && gpu_interp_ready ? "_i" : "");
             void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
             video_save_png(name, fl, win_w, win_h);
             free(px);

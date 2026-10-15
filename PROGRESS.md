@@ -203,6 +203,9 @@ Tercera ronda (2026-10-14; detalle en `notes/recomp.md` y `notes/sound.md`, "Ter
   Resolución interna automática en pantalla completa: x6 (1536x1152, reducida a 1440x1080). Sin probar en el
   monitor (para no quitarle la pantalla al usuario); en ventana, VERIFICADO que sigue igual.
 - **Mando XInput** (Xbox y compatibles). Sin probar con un mando conectado.
+- **Cuarta ronda** (`notes/recomp.md`): texturas lejanas nítidas sin parpadeo (anisotrópico x16), controles
+  configurables (ventana "Controles…"), menús y marcadores con bordes suaves, y 120 imágenes por segundo
+  experimental (en el portátil del usuario solo cabe en parte: el juego ya usa ~11 de los 16,7 ms).
 
 Lo que queda:
 1. **Escuchar el sonido** (el usuario): volumen, tono, cortes, y la música sustituta con canciones de verdad

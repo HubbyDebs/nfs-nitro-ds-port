@@ -643,3 +643,28 @@ cielo raro. Captura `Capturaug 2.PNG`.
   (0,35 en vez de 0,75) y las dos con el borde del halo difuminado (alfa al cuadrado). HIPÓTESIS: el juego cambia
   su color al encenderlas (busca los materiales por nombre: cadenas `blight`/`rlight`/`hlight` en `0x02109458`,
   usadas desde `FUN_0207cef8`); sin comprobar.
+
+## Cuarta ronda (2026-10-15) — copia previa: rama y etiqueta `copia-seguridad-2026-10-15`
+
+- **Pantalla completa** (`win.c`): rectángulos de pantalla de cualquier tamaño (`screen_rects`: x, y, ancho, alto;
+  antes escalas enteras). F11 / Alt+Intro / Esc, disposición 3 (solo la pantalla del juego). VERIFICADO con
+  capturas de la gráfica a 1920x1080 (juego a 1440x1080 y táctil a 480x360).
+- **Texturas lejanas** (`NFS_SHARP`): 1 = mipmaps + anisotrópico x16 + nivel -0,75 (por defecto); 2 = sin mipmaps;
+  0 = mipmaps -0,4. VERIFICADO: a x6 las tres dan la misma imagen (las texturas casi nunca se reducen a esa
+  resolución); a x1, el modo 1 queda entre los otros en detalle (1,98 frente a 1,88 y 2,08) y cambio entre imágenes.
+- **Controles** (`controls.h`, ventana "Controles…" del menú): tecla y control del mando por botón, en
+  `opciones.ini` (`NFS_KEY_*`, `NFS_PAD_*`). Mando por XInput (DLL cargada al vuelo). Sin probar con un mando real.
+- **2D con bordes suaves** (`NFS_SMOOTH2D`, sombreador de mezcla en `gpu.inc.c`): las capas 2D se amplían con el
+  filtro de las calcomanías y el contorno de los sprites sobre el 3D con su cobertura (B-spline). Solo en la gráfica.
+- **120 imágenes por segundo** (`NFS_FPS120`, experimental, apagado): por cada imagen del juego se dibuja otra
+  intermedia (`gpu_interp_frame`): los polígonos se emparejan con los de la imagen anterior (mismo material y
+  vértices, el más parecido entre los cercanos en orden, a menos de 12 píxeles de la consola) y cada vértice se
+  pone a medio camino; los vértices compartidos se mueven igual (tabla por posición), así no se abren rendijas.
+  Se enseña la intermedia en cuanto está y la actual al empezar el periodo siguiente. VERIFICADO: imagen intermedia
+  limpia (sin rendijas ni piezas cruzadas tras emparejar por todos los vértices), el juego sigue a 60 (4.300
+  imágenes en 72,3 s; sin la opción, 72,3 s también). LIMITACIÓN medida en el portátil del usuario: el juego ya
+  gasta ~11 ms de los 16,7 por imagen y la intermedia añade 3-6 ms, así que solo cabe en el 10-35 % de las imágenes
+  (más con resolución baja y sin suavizados). Si la media con intermedia pasa de 15,5 ms, un segundo sin ellas.
+- Herramientas de prueba: `NFS_WINSHOT_EVERY/FROM/TO` (captura de lo que pinta la gráfica; `_i` = intermedia),
+  `NFS_TEST_OFFSCREEN` (ventana fuera de la vista), `NFS_NOMENU`, `NFS_MENU_SNAPSHOT` (menú y controles en PNG sin
+  mostrarlos), `NFS_FPS120_LOG`, `NFS_LODBIAS`.

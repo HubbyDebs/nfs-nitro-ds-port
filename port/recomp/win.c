@@ -32,6 +32,7 @@
  *   NFS_SHARP=n        texturas de lejos: 1 = nitidas sin parpadeo (anisotropico x16; por defecto),
  *                      0 = mas suaves, 2 = sin reducciones (lo mas nitido, el suelo lejano parpadea)
  *   NFS_SMOOTH2D=0     imagenes 2D (menus, marcadores) ampliadas pixel a pixel, sin suavizar los bordes
+ *   NFS_FPS120=1       120 imagenes por segundo: una intermedia entre cada dos del juego (experimental)
  *   NFS_SHINY=0        coches sin barniz (reflejo del cielo, Fresnel y brillos de la pintura)
  *   NFS_SPIKES=ms      apunta los fotogramas que tarden mas de esos milisegundos (tirones)
  *   NFS_HEADLESS=1     sin ventana (para pruebas automaticas)
@@ -55,7 +56,7 @@ void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
 
 /* ---- configuracion ------------------------------------------------------------------------- */
 static int configured, headless, layout, win_scale, internal_scale, filter = 1, shot_every, fullscreen;
-static int smooth2d = 1, sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
+static int fps120, smooth2d = 1, sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
 static uint32_t shot_from, shot_to = 0xFFFFFFFFu;
 
 static int env_int(const char *name, int fallback) { return getenv(name) ? atoi(getenv(name)) : fallback; }
@@ -83,6 +84,7 @@ static void configure(void) {
     if (sharp < 0 || sharp > 2) sharp = 1;
     gpu = env_int("NFS_GPU", 1) != 0;
     smooth2d = env_int("NFS_SMOOTH2D", 1) != 0;
+    fps120 = env_int("NFS_FPS120", 0) != 0;
     msaa = env_int("NFS_MSAA", 4);
     if (tess < 0) tess = 0;
     if (tess > 4) tess = 4;
@@ -134,7 +136,9 @@ int video_shadows(void) { configure(); return shadows; }
 int video_shiny(void) { configure(); return shiny; }
 int video_bloom(void) { configure(); return bloom; }
 int video_sharp(void) { configure(); return sharp; }
-int video_smooth2d(void) { configure(); return smooth2d; } /* menus y marcadores ampliados con bordes suaves */ /* sin mipmaps: texturas nitidas de lejos */
+int video_smooth2d(void) { configure(); return smooth2d; }
+static int fps120_skip, interp_shown; /* la imagen anterior fue justa de tiempo: esta sin intermedia (el juego no se frena) */
+int video_fps120(void) { configure(); return fps120 && !headless && !fps120_skip; } /* imagen intermedia entre cada dos */ /* menus y marcadores ampliados con bordes suaves */ /* sin mipmaps: texturas nitidas de lejos */
 int video_gpu(void) { configure(); return gpu; }
 int video_msaa(void) { configure(); return msaa; }
 
@@ -446,12 +450,40 @@ void win_frame(void) {
     spike_check();
     run_script();
     LARGE_INTEGER p0, p1, p2;
+    LONGLONG mid_wait = 0;
+    int real_later = 0; /* 120 fps: la imagen actual se ensena al final */
     QueryPerformanceCounter(&p0);
     int shot = shot_every && g_frame >= shot_from && g_frame <= shot_to && g_frame % (uint32_t)shot_every == 0;
     if (!headless && !shot && video_gpu()) { /* con la grafica: ella mezcla el 2D con el 3D y pinta la ventana */
         int r[2][4];
         screen_rects(r);
-        win_gpu_present = video_present_gpu(r[0], r[1], window, present_w, present_h);
+        int gpu_interp_pending(void);
+        void gpu_set_present_interp(int on);
+        if (fps120 && gpu_interp_pending()) {
+            /* 120 fps: ahora la imagen intermedia (si va adelantada, a mitad del periodo) y la actual al empezar
+             * el periodo siguiente, al final de win_frame: dos imagenes por cada una del juego sin frenarlo */
+            LARGE_INTEGER mid = next_tick, now, w0;
+            mid.QuadPart += freq.QuadPart / 120;
+            QueryPerformanceCounter(&w0);
+            now = w0;
+            while (now.QuadPart < mid.QuadPart) {
+                LONGLONG left_ms = (mid.QuadPart - now.QuadPart) * 1000 / freq.QuadPart;
+                if (left_ms > 1) Sleep((DWORD)(left_ms - 1));
+                QueryPerformanceCounter(&now);
+            }
+            mid_wait = now.QuadPart - w0.QuadPart;
+            gpu_set_present_interp(1);
+            win_gpu_present = video_present_gpu(r[0], r[1], window, present_w, present_h);
+            gpu_set_present_interp(0);
+            real_later = win_gpu_present;
+            interp_shown += win_gpu_present;
+        } else {
+            win_gpu_present = video_present_gpu(r[0], r[1], window, present_w, present_h);
+        }
+        if (fps120 && getenv("NFS_FPS120_LOG") && g_frame % 600 == 0) {
+            fprintf(stderr, "[120] fotograma %u: %d de 600 imagenes con intermedia%c", g_frame, interp_shown, 10);
+            interp_shown = 0;
+        }
     } else {
         win_gpu_present = 0;
     }
@@ -502,11 +534,36 @@ void win_frame(void) {
             }
         }
     }
+    if (fps120 && perf_last.QuadPart) {
+        /* trabajo de esta imagen sin contar esperas. Si con intermedia la media pasa de 15,5 ms, un segundo sin ellas (mejor
+         * 60 fijas que ir alternando, que da tirones); luego se vuelve a probar */
+        static int pause;
+        double work = (double)(now.QuadPart - perf_last.QuadPart - mid_wait) * 1000 / (double)freq.QuadPart;
+        static double sum[2], mx[2];
+        static int cnt[2];
+        sum[real_later] += work; cnt[real_later]++; if (work > mx[real_later]) mx[real_later] = work;
+        if (getenv("NFS_FPS120_LOG") && g_frame % 600 == 0) {
+            fprintf(stderr, "[120] trabajo por imagen: sin intermedia %.1f ms (max %.1f, %d), con intermedia %.1f ms (max %.1f, %d)%c",
+                    cnt[0] ? sum[0] / cnt[0] : 0, mx[0], cnt[0], cnt[1] ? sum[1] / cnt[1] : 0, mx[1], cnt[1], 10);
+            memset(sum, 0, sizeof sum); memset(mx, 0, sizeof mx); memset(cnt, 0, sizeof cnt);
+        }
+        static double avg = 12;
+        if (real_later) avg = avg * 0.9 + work * 0.1; /* media de las ultimas con intermedia */
+        if (real_later && (avg > 15.5 || work > 24)) { pause = 60; avg = 12; } /* va justa de verdad (no un pico suelto) */
+        else if (pause > 0) pause--;
+        fps120_skip = pause > 0;
+    }
     if (now.QuadPart > next_tick.QuadPart + freq.QuadPart / 4) next_tick = now; /* muy retrasado: no recuperar */
     while (now.QuadPart < next_tick.QuadPart) {
         LONGLONG left_ms = (next_tick.QuadPart - now.QuadPart) * 1000 / freq.QuadPart;
         if (left_ms > 1) Sleep((DWORD)(left_ms - 1));
         QueryPerformanceCounter(&now);
+    }
+    if (real_later) { /* 120 fps: la imagen actual, al empezar el periodo */
+        int r[2][4];
+        screen_rects(r);
+        int video_present_gpu_again(const int top_r[4], const int bot_r[4], void *hwnd, int win_w, int win_h);
+        video_present_gpu_again(r[0], r[1], window, present_w, present_h);
     }
     perf_last = now;
 }

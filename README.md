@@ -85,6 +85,9 @@ Ejecuta `jugar.cmd`. Primero sale el menú: elige la carpeta del juego, la calid
 
 **Mando** (Xbox o compatible, XInput): gatillo derecho o A = acelerar / aceptar, gatillo izquierdo o B = frenar /
 atrás, RB = nitro (R), LB = freno de mano (L), X = Y, Y = X, Start, Back = Select, cruceta o palanca izquierda.
+**Controles**: botón "Controles…" del menú para cambiar teclas y mando.
+**120 imágenes por segundo** (experimental): casilla del menú; dibuja una imagen intermedia entre cada dos del
+juego. Necesita un monitor de 120 Hz o más y margen de sobra (se apaga sola cuando no da tiempo).
 **Pantalla completa**: casilla del menú o F11; con la disposición "Solo la pantalla del juego" la imagen ocupa
 todo el alto (1440x1080 en un monitor de 1920x1080; F1 cambia de disposición).
 

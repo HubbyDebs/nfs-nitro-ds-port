@@ -547,18 +547,29 @@ static void pack_screen(int k, Engine *e, GpuScreen *g) {
     g->bright_mode = bright >> 14; g->bright_factor = (bright & 31) > 16 ? 16 : (bright & 31);
 }
 
+static GpuScreen last_ga, last_gb; /* el 2D de la ultima vez (con 120 fps se pinta dos veces el mismo) */
+static int last_main_on_top, have_last;
+static int present_packed(const int top_r[4], const int bot_r[4], void *hwnd, int win_w, int win_h) {
+    GpuScreen ga = last_ga, gb = last_gb;
+    GpuScreen *top = last_main_on_top ? &ga : &gb, *bot = last_main_on_top ? &gb : &ga;
+    top->x = top_r[0]; top->y = top_r[1]; top->w = top_r[2]; top->h = top_r[3];
+    bot->x = bot_r[0]; bot->y = bot_r[1]; bot->w = bot_r[2]; bot->h = bot_r[3];
+    return gpu_present(top, bot, hwnd, win_w, win_h);
+}
 int video_present_gpu(const int top_r[4], const int bot_r[4], void *hwnd, int win_w, int win_h) {
     uint8_t *vram = io_mem(3), *pal = io_mem(2), *oam = io_mem(4);
     Engine a = {io_mem(0), vram, vram + 0x400000, pal, pal + 0x200, oam, vram + 0x880000, 1};
     Engine b = {io_mem(1), vram + 0x200000, vram + 0x600000, pal + 0x400, pal + 0x600, oam + 0x400, vram + 0x898000, 0};
-    int main_on_top = (io_reg(0x304) >> 15) & 1;
-    GpuScreen ga, gb;
-    pack_screen(0, &a, &ga);
-    pack_screen(1, &b, &gb);
-    GpuScreen *top = main_on_top ? &ga : &gb, *bot = main_on_top ? &gb : &ga;
-    top->x = top_r[0]; top->y = top_r[1]; top->w = top_r[2]; top->h = top_r[3];
-    bot->x = bot_r[0]; bot->y = bot_r[1]; bot->w = bot_r[2]; bot->h = bot_r[3];
-    return gpu_present(top, bot, hwnd, win_w, win_h);
+    last_main_on_top = (io_reg(0x304) >> 15) & 1;
+    pack_screen(0, &a, &last_ga);
+    pack_screen(1, &b, &last_gb);
+    have_last = 1;
+    return present_packed(top_r, bot_r, hwnd, win_w, win_h);
+}
+/* Lo mismo sin volver a juntar las capas 2D (no han cambiado desde la ultima vez) */
+int video_present_gpu_again(const int top_r[4], const int bot_r[4], void *hwnd, int win_w, int win_h) {
+    if (!have_last) return video_present_gpu(top_r, bot_r, hwnd, win_w, win_h);
+    return present_packed(top_r, bot_r, hwnd, win_w, win_h);
 }
 
 /* Dibuja las dos pantallas en out: (256*S) x (384*S) pixeles, la de arriba primero. */
