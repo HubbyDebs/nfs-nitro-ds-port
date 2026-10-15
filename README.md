@@ -85,6 +85,10 @@ Ejecuta `jugar.cmd`. Primero sale el menú: elige la carpeta del juego, la calid
 
 **Mando** (Xbox o compatible, XInput): gatillo derecho o A = acelerar / aceptar, gatillo izquierdo o B = frenar /
 atrás, RB = nitro (R), LB = freno de mano (L), X = Y, Y = X, Start, Back = Select, cruceta o palanca izquierda.
+**Icono del programa**: si pones un icono en `%USERPROFILE%
+fs-nitro-build\icono
+fs.ico` (o `NFS_ICON=ruta`),
+`build.py` lo mete dentro de `nfs_boot.exe` y lo usan la ventana y el menú. El icono no va en el repositorio.
 **Controles**: botón "Controles…" del menú para cambiar teclas y mando.
 **120 imágenes por segundo** (experimental): casilla del menú; dibuja una imagen intermedia entre cada dos del
 juego. Necesita un monitor de 120 Hz o más y margen de sobra (se apaga sola cuando no da tiempo).

@@ -529,7 +529,8 @@ int launcher_menu(void) {
     wc.hInstance = GetModuleHandleW(0);
     wc.lpszClassName = L"NfsNitroMenu";
     wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
-    wc.hIcon = LoadIconW(0, (LPCWSTR)IDI_APPLICATION);
+    wc.hIcon = LoadIconW(GetModuleHandleW(0), MAKEINTRESOURCEW(1)); /* el del .exe si lo lleva (build.py) */
+    if (!wc.hIcon) wc.hIcon = LoadIconW(0, (LPCWSTR)IDI_APPLICATION);
     wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
     RegisterClassW(&wc);
 

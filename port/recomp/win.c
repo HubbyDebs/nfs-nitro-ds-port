@@ -427,6 +427,8 @@ static void init(void) {
     wc.lpfnWndProc = wnd_proc;
     wc.hInstance = GetModuleHandleA(0);
     wc.hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW);
+    wc.hIcon = LoadIconA(wc.hInstance, MAKEINTRESOURCEA(1)); /* el del .exe si lo lleva (build.py) */
+    if (!wc.hIcon) wc.hIcon = LoadIconA(0, (LPCSTR)IDI_APPLICATION);
     wc.lpszClassName = "NfsNitroPort";
     RegisterClassA(&wc);
     RECT r = {0, 0, present_w, present_h};

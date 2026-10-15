@@ -16,3 +16,5 @@ __pycache__/
 *.m4a
 *.ogg
 *.wma
+*.ico
+*.webp

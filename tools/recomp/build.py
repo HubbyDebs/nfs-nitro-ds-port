@@ -108,6 +108,24 @@ def main():
     if failed:
         sys.exit(1)
 
+    # Icono del programa (opcional): un .ico del usuario, fuera del proyecto (la portada del juego no se sube al
+    # repositorio). Por defecto <compilacion>\..\icono\nfs.ico; tambien NFS_ICON=ruta.
+    ico = os.environ.get('NFS_ICON', os.path.join(os.path.dirname(args.build), 'icono', 'nfs.ico'))
+    ico_obj = os.path.join(args.build, 'zz_icono.o')
+    if os.path.exists(ico):
+        bindir = os.path.dirname(CLANG)
+        windres = os.path.join(bindir, 'x86_64-w64-mingw32-windres.exe')
+        cmd = [windres] if os.path.exists(windres) else [os.path.join(bindir, 'llvm-windres.exe'), '--target=pe-x86-64']
+        rc = os.path.join(args.build, 'icono.rc')
+        with open(rc, 'w') as f:
+            f.write('1 ICON "%s"\n' % ico.replace('\\', '/'))
+        r = subprocess.run(cmd + [rc, '-O', 'coff', '-o', ico_obj], capture_output=True, text=True)
+        if r.returncode:
+            print('aviso: no se pudo poner el icono:', r.stderr[:500])
+            if os.path.exists(ico_obj):
+                os.remove(ico_obj)
+    elif os.path.exists(ico_obj):
+        os.remove(ico_obj)
     objs = sorted(glob.glob(os.path.join(args.build, '*.o')))
     exe = os.path.join(args.build, os.environ.get('NFS_EXE_NAME', 'nfs_boot.exe'))
     subprocess.check_call([CLANG, '-o', exe] + objs + ['-lgdi32', '-luser32', '-lopengl32', '-lshell32', '-lole32', '-lwinmm', '-lmfplat', '-lmfreadwrite', '-lmfuuid', '-lm'])
