@@ -71,6 +71,7 @@ int video_shadows(void);
 int video_shiny(void);
 int video_bloom(void);
 int video_sharp(void);
+int video_smooth2d(void);
 static Poly *polys;
 static int poly_count;
 

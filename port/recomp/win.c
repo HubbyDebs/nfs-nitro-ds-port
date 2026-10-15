@@ -31,6 +31,7 @@
  *   NFS_BLOOM=0        sin resplandor (bloom)
  *   NFS_SHARP=n        texturas de lejos: 1 = nitidas sin parpadeo (anisotropico x16; por defecto),
  *                      0 = mas suaves, 2 = sin reducciones (lo mas nitido, el suelo lejano parpadea)
+ *   NFS_SMOOTH2D=0     imagenes 2D (menus, marcadores) ampliadas pixel a pixel, sin suavizar los bordes
  *   NFS_SHINY=0        coches sin barniz (reflejo del cielo, Fresnel y brillos de la pintura)
  *   NFS_SPIKES=ms      apunta los fotogramas que tarden mas de esos milisegundos (tirones)
  *   NFS_HEADLESS=1     sin ventana (para pruebas automaticas)
@@ -54,7 +55,7 @@ void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
 
 /* ---- configuracion ------------------------------------------------------------------------- */
 static int configured, headless, layout, win_scale, internal_scale, filter = 1, shot_every, fullscreen;
-static int sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
+static int smooth2d = 1, sharp = 1, pixel_light = 1, tess = 2, fog = 1, shadows = 1, shiny = 1, bloom = 1, gpu = 1, msaa = 4;
 static uint32_t shot_from, shot_to = 0xFFFFFFFFu;
 
 static int env_int(const char *name, int fallback) { return getenv(name) ? atoi(getenv(name)) : fallback; }
@@ -81,6 +82,7 @@ static void configure(void) {
     sharp = env_int("NFS_SHARP", 1);
     if (sharp < 0 || sharp > 2) sharp = 1;
     gpu = env_int("NFS_GPU", 1) != 0;
+    smooth2d = env_int("NFS_SMOOTH2D", 1) != 0;
     msaa = env_int("NFS_MSAA", 4);
     if (tess < 0) tess = 0;
     if (tess > 4) tess = 4;
@@ -131,7 +133,8 @@ int video_fog(void) { configure(); return fog; }
 int video_shadows(void) { configure(); return shadows; }
 int video_shiny(void) { configure(); return shiny; }
 int video_bloom(void) { configure(); return bloom; }
-int video_sharp(void) { configure(); return sharp; } /* sin mipmaps: texturas nitidas de lejos */
+int video_sharp(void) { configure(); return sharp; }
+int video_smooth2d(void) { configure(); return smooth2d; } /* menus y marcadores ampliados con bordes suaves */ /* sin mipmaps: texturas nitidas de lejos */
 int video_gpu(void) { configure(); return gpu; }
 int video_msaa(void) { configure(); return msaa; }
 
