@@ -21,6 +21,19 @@ $GameDir = Join-Path $env:USERPROFILE "nfs-nitro-game"
 $BuildDir = Join-Path $env:USERPROFILE "nfs-nitro-build\game"
 $LlvmVersion = "20261006"
 $Arm9Sha1 = "56481f5929138dd3b81f95557b76c7d4a6a3954a"
+$curl = Join-Path $env:SystemRoot "System32\curl.exe" # el de Windows (no otro del PATH)
+if (-not (Test-Path $curl)) { $curl = "curl.exe" }
+
+# Descomprimir con el tar de Windows (no con otro que haya en el PATH, como el de devkitPro o Git, que no
+# entienden "C:\..."); si no esta (Windows antiguo), con Expand-Archive
+function Descomprimir($zip, $destino) {
+    $tar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (Test-Path $tar) {
+        & $tar -xf $zip -C $destino
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+    Expand-Archive -LiteralPath $zip -DestinationPath $destino -Force
+}
 
 function Paso($texto) { Write-Host ""; Write-Host "== $texto" -ForegroundColor Cyan }
 function Fallo($texto) {
@@ -57,21 +70,22 @@ $uv = Join-Path $Tools "uv\uv.exe"
 if (-not (Test-Path $uv)) {
     Write-Host "Descargando uv (instala Python)..."
     $zip = Join-Path $Tools "uv.zip"
-    & curl.exe -L --fail --progress-bar -o $zip "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+    & $curl -L --fail --progress-bar -o $zip "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
     if ($LASTEXITCODE -ne 0) { Fallo "no se pudo descargar uv. Comprueba la conexión a internet." }
     New-Item -ItemType Directory -Force -Path (Join-Path $Tools "uv") | Out-Null
-    & tar.exe -xf $zip -C (Join-Path $Tools "uv")
+    Descomprimir $zip (Join-Path $Tools "uv")
     Remove-Item $zip
+    if (-not (Test-Path $uv)) { Fallo "no se encuentra uv.exe despues de descomprimirlo." }
 }
 $clang = Get-ChildItem -Path $Tools -Filter "llvm-mingw-*" -Directory -ErrorAction SilentlyContinue |
     ForEach-Object { Join-Path $_.FullName "bin\clang.exe" } | Where-Object { Test-Path $_ } | Select-Object -Last 1
 if (-not $clang) {
     Write-Host "Descargando el compilador llvm-mingw (unos 190 MB)..."
     $zip = Join-Path $Tools "llvm-mingw.zip"
-    & curl.exe -L --fail --progress-bar -o $zip "https://github.com/mstorsjo/llvm-mingw/releases/download/$LlvmVersion/llvm-mingw-$LlvmVersion-ucrt-x86_64.zip"
+    & $curl -L --fail --progress-bar -o $zip "https://github.com/mstorsjo/llvm-mingw/releases/download/$LlvmVersion/llvm-mingw-$LlvmVersion-ucrt-x86_64.zip"
     if ($LASTEXITCODE -ne 0) { Fallo "no se pudo descargar llvm-mingw. Comprueba la conexión a internet." }
     Write-Host "Descomprimiendo..."
-    & tar.exe -xf $zip -C $Tools
+    Descomprimir $zip $Tools
     Remove-Item $zip
     $clang = Join-Path $Tools "llvm-mingw-$LlvmVersion-ucrt-x86_64\bin\clang.exe"
     if (-not (Test-Path $clang)) { Fallo "no se encuentra clang.exe después de descomprimir llvm-mingw." }

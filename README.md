@@ -9,6 +9,23 @@ tarjeta gráfica.
 > ni el código traducido. Para jugar necesitas tu propia copia del juego. El port carga todo desde tu ROM
 > extraída, en el momento de jugar. Es un proyecto personal sin ánimo de lucro.
 
+## Instalar y jugar (fácil)
+
+1. Descarga la última versión desde **Releases** (el zip del código) y descomprímela donde quieras.
+2. Haz doble clic en **`instalar.cmd`**.
+3. Elige **tu ROM** de *Need for Speed: Nitro* (archivo `.nds`, versión de EE. UU., `NTR-BNNE-USA`).
+4. Espera: el instalador descarga las herramientas (Python y el compilador, unos 200 MB, solo la primera vez),
+   extrae tu ROM, **traduce el juego a C en tu PC** y crea el programa. La primera vez tarda unos 10-20 minutos.
+5. Abre el juego con el acceso directo **"Need for Speed Nitro"** del escritorio.
+
+Todo va en tu carpeta de usuario: `nfs-nitro-game` (tu ROM extraída), `nfs-nitro-tools` (herramientas),
+`nfs-nitro-build\game` (el programa) y `nfs-nitro-models` (mejoras de los coches). Si tienes **Blender 5**
+instalado, el instalador también prepara los modelos de garaje de los coches para la carrera.
+
+> **¿Por qué no hay un `.exe` para descargar?** Porque el programa lleva dentro el código del juego traducido,
+> y ese código es de EA. El port solo reparte sus herramientas: el programa se crea en tu PC a partir de tu
+> propia copia del juego.
+
 ## Qué funciona
 
 - El juego arranca y se juega: menús, tutorial, carreras y partidas guardadas (probado en varias pistas; el
