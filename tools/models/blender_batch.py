@@ -45,12 +45,19 @@ for job in jobs:
             for e in bm.edges:
                 if len(e.link_faces) != 2 or e.calc_face_angle(0) > sharp:
                     e[crease] = 1.0
+            # los bordes abiertos (huecos de ventanas, pasos de rueda) no se mueven nada: si se redondeaban, la chapa
+            # tapaba las esquinas del cristal, que no se subdivide (picos de color en las ventanas del Corolla)
+            vcrease = bm.verts.layers.float.get('crease_vert') or bm.verts.layers.float.new('crease_vert')
+            for v in bm.verts:
+                if any(len(e.link_faces) != 2 for e in v.link_edges):
+                    v[vcrease] = 1.0
         bm.to_mesh(me)
         bm.free()
         if spec['smooth']:
             mod = o.modifiers.new('subdiv', 'SUBSURF')
             mod.levels = mod.render_levels = level
             mod.uv_smooth = 'PRESERVE_BOUNDARIES'
+            mod.boundary_smooth = 'PRESERVE_CORNERS'
         bpy.context.view_layer.objects.active = o
         o.select_set(True)
         bpy.ops.object.shade_smooth_by_angle(angle=sharp)

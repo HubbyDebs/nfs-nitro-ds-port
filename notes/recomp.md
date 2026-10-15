@@ -681,3 +681,18 @@ cielo raro. Captura `Capturaug 2.PNG`.
   queda una rendija entre piezas se ve esa imagen y no una línea negra (VERIFICADO en la captura que la tenía).
   Las texturas animadas del juego (flechas de las vallas) cambian a 60 por segundo: no se interpolan.
   `NFS_FPS120_FORCE=1` (pruebas): intermedia siempre.
+
+### Tercera revisión del usuario (2026-10-15)
+- **Filtro 2D quitado** del todo (al usuario no le gustó ninguna versión): vuelve el sombreador de mezcla de antes y
+  la casilla desaparece del menú.
+- **Reflejo de la X**: el barniz mezcla en la pintura lo que hay "encima" en la imagen anterior (reflejo en
+  pantalla) y reflejaba el icono de la X que el juego dibuja en 3D sobre el coche. Ahora la gráfica guarda junto a
+  cada imagen la distancia de cada píxel (segunda imagen R32F, `o_dep = v_w`, resuelta junto al color) y el
+  reflejo solo usa píxeles al menos 1,6 veces más lejos que el punto de la pintura: cielo y edificios sí; el
+  icono, los muñecos del techo y el propio coche no. Sin probar con la X real (el guion no la hace salir); sin
+  errores de OpenGL.
+- **Ventanas del Corolla / Renault** (`bug ventanas…PNG`): al subdividir la carrocería, Catmull-Clark redondeaba
+  los huecos de las ventanas y la chapa tapaba las esquinas del cristal (que no se subdivide): picos de color.
+  `blender_batch.py` fija ahora los vértices de los bordes abiertos (pliegue de vértice 1) y
+  `boundary_smooth = PRESERVE_CORNERS`. VERIFICADO en Blender (huecos idénticos al original) y en carrera con el
+  Corolla. Regenerado con `upgrade_cars.py`.

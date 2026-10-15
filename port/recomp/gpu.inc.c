@@ -46,7 +46,8 @@ int video_msaa(void);
     X(PFNGLACTIVETEXTUREPROC, glActiveTexture) X(PFNGLGENSAMPLERSPROC, glGenSamplers)                               \
     X(PFNGLSAMPLERPARAMETERIPROC, glSamplerParameteri) X(PFNGLSAMPLERPARAMETERFPROC, glSamplerParameterf)           \
     X(PFNGLBINDSAMPLERPROC, glBindSampler) X(PFNGLBLENDFUNCSEPARATEPROC, glBlendFuncSeparate)                       \
-    X(PFNGLBLENDEQUATIONSEPARATEPROC, glBlendEquationSeparate) X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)
+    X(PFNGLBLENDEQUATIONSEPARATEPROC, glBlendEquationSeparate) X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap)     \
+    X(PFNGLDRAWBUFFERSPROC, glDrawBuffers) X(PFNGLDISABLEIPROC, glDisablei) X(PFNGLCLEARBUFFERFVPROC, glClearBufferfv)
 
 #define GL_DECLARE(type, name) static type p_##name;
 GL_LIST(GL_DECLARE)
@@ -93,6 +94,9 @@ GL_LIST(GL_DECLARE)
 #define glBlendFuncSeparate p_glBlendFuncSeparate
 #define glBlendEquationSeparate p_glBlendEquationSeparate
 #define glGenerateMipmap p_glGenerateMipmap
+#define glDrawBuffers p_glDrawBuffers
+#define glDisablei p_glDisablei
+#define glClearBufferfv p_glClearBufferfv
 
 #ifndef GL_TEXTURE_MAX_ANISOTROPY
 #define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
@@ -102,6 +106,10 @@ static int gpu_state = 0; /* 0 sin probar, 1 funcionando, -1 no disponible */
 int gpu_bloom_done;        /* este fotograma el resplandor ya lo hizo la grafica */
 static GLuint gpu_bl_prog[3], gpu_bl_fbo[2], gpu_bl_tex[2]; /* resplandor: brillo, difuminado, suma */
 static GLuint gpu_copy_prog;
+/* distancia de cada pixel (w de recorte), en una segunda imagen junto al color: el reflejo de la pintura solo usa
+ * lo que esta claramente mas lejos que el coche (antes reflejaba el icono de la X que el juego pone encima) */
+static GLuint gpu_msaa_dep, gpu_res_dep[3];
+static const GLenum gpu_bufs2[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
 static GLuint gpu_comp_prog, gpu_scr_tex[2][4]; /* mezcla final con el 2D y texturas de sus capas */
 static HDC gpu_win_dc;
 extern int win_gpu_present;
@@ -131,21 +139,21 @@ static const char *GPU_VS =
 static const char *GPU_FS =
     "#version 330 core\n"
     "in vec3 v_col; in vec2 v_uv; in vec3 v_n; in vec3 v_v; in vec3 v_m; in float v_w; noperspective in float v_z;\n"
-    "layout(location=0) out vec4 o_col;\n"
+    "layout(location=0) out vec4 o_col; layout(location=1) out float o_dep;\n"
     "uniform sampler2D u_tex; uniform int u_has_tex; uniform vec2 u_tsize; uniform int u_unpremul;\n"
     "uniform int u_mode; uniform float u_alpha; uniform int u_lit;\n"
     "uniform int u_lmask; uniform vec3 u_ldir[4]; uniform vec3 u_lhalf[4]; uniform vec3 u_lcol[4];\n"
     "uniform vec3 u_dif; uniform vec3 u_amb; uniform vec3 u_spe; uniform vec3 u_emi; uniform int u_shin_on; uniform float u_shin[128];\n"
     "uniform int u_highlight; uniform vec3 u_toon[32];\n"
     "uniform int u_env; uniform vec4 u_envp0; uniform vec4 u_envp1;\n"
-    "uniform int u_shiny; uniform vec3 u_sky_h; uniform vec3 u_sky_z; uniform sampler2D u_prev; uniform int u_has_prev;\n"
+    "uniform int u_shiny; uniform vec3 u_sky_h; uniform vec3 u_sky_z; uniform sampler2D u_prev; uniform int u_has_prev; uniform sampler2D u_prevdep;\n"
     "uniform vec2 u_res; uniform float u_scale;\n"
     "uniform int u_wbuffer; uniform float u_depth_bias; uniform float u_alpha_ref; uniform int u_cutout; uniform int u_pass;\n"
     "uniform int u_maskonly; uniform vec3 u_glow;\n"
     "uniform int u_fog; uniform int u_fog_alpha_only; uniform vec3 u_fog_rgb; uniform float u_fog_a; uniform float u_fog_offset;\n"
     "uniform float u_fog_step; uniform float u_fog_table[32];\n"
     "float t_lum(vec3 c) { return max(c.r, max(c.g, c.b)); }\n"
-    "void main() {\n"
+    "void main() { o_dep = v_w;\n"
     "  float depth = (u_wbuffer != 0) ? v_w / 65536.0 : v_z * 0.5 + 0.5;\n"
     "  gl_FragDepth = clamp(depth + u_depth_bias, 0.0, 1.0);\n"
     "  if (u_maskonly != 0) { o_col = vec4(0.0); return; }\n"
@@ -185,7 +193,8 @@ static const char *GPU_FS =
     "      float dd = u_scale * 2.0; vec3 acc = vec3(0.0); float got = 0.0;\n"
     "      for (int k = 0; k < 4; k++) {\n"
     "        vec2 q = clamp(cp + vec2((k & 1) != 0 ? dd : -dd, (k & 2) != 0 ? dd : -dd), vec2(0.5), u_res - 0.5);\n"
-    "        vec4 e = texture(u_prev, q / u_res); if (e.a > 0.0) { acc += e.rgb; got += 1.0; }\n"
+    "        vec4 e = texture(u_prev, q / u_res);\n"
+    "        if (e.a > 0.0 && texture(u_prevdep, q / u_res).r > v_w * 1.6) { acc += e.rgb; got += 1.0; }\n"
     "      }\n"
     "      if (got > 0.0) sky = mix(sky, acc / got, ws * got / 4.0);\n"
     "    }\n"
@@ -261,75 +270,29 @@ static const char *GPU_COMP_FS =
     "in vec2 v_p; out vec4 o;\n"
     "uniform sampler2D t_back; uniform sampler2D t_front; uniform sampler2D t_raw; uniform sampler2D t_ids; uniform sampler2D t_3d;\n"
     "uniform int u_use3d; uniform int u_fx3d; uniform int u_cnt; uniform float u_eva; uniform float u_evb;\n"
-    "uniform int u_bmode; uniform float u_bfac; uniform int u_smooth; uniform vec4 u_sm;\n"
+    "uniform int u_bmode; uniform float u_bfac;\n"
     "vec3 fade(vec3 c, int fx) { if (fx > 0) return c + (1.0 - c) * float(fx) / 16.0; if (fx < 0) return c + c * float(fx) / 16.0; return c; }\n"
     "bool second(int layer) { return ((u_cnt >> (8 + layer)) & 1) != 0; }\n"
-    /* Ampliacion suave de las capas 2D (NFS_SMOOTH2D): la misma idea que las calcomanias de los coches (gx.c,
-     * smooth_texture). Color con Catmull-Rom; donde hay un borde entre los 4 pixeles mas cercanos, el color va
-     * del mas oscuro al mas claro segun la luminancia interpolada con una B-spline: bordes nitidos y redondeados.
-     * La capa de delante (sprites, letras) solo existe en algunos pixeles: los que no la tienen se rellenan con
-     * uno vecino que si, y su contorno sobre el 3D se suaviza igual (cobertura con B-spline). */
-    "float lum(vec3 c) { return dot(c, vec3(0.3, 0.59, 0.11)); }\n"
-    "float cr(float x) { x = abs(x); return x < 1.0 ? 1.5*x*x*x - 2.5*x*x + 1.0 : (x < 2.0 ? -0.5*x*x*x + 2.5*x*x - 4.0*x + 2.0 : 0.0); }\n"
-    "float bs(float x) { x = abs(x); return x < 1.0 ? (4.0 - 6.0*x*x + 3.0*x*x*x) / 6.0 : (x < 2.0 ? (2.0-x)*(2.0-x)*(2.0-x) / 6.0 : 0.0); }\n"
-    "bool has_front(ivec2 q) { return int(texelFetch(t_ids, q, 0).g * 255.0 + 0.5) != 255; }\n"
-    "float edge(float u) { u = clamp((u - u_sm.x) / (u_sm.y - u_sm.x), 0.0, 1.0); return u * u * (3.0 - 2.0 * u); }\n"
-    "vec3 smooth_layer(int which, vec2 q, out float cover) {\n"
-    "  ivec2 i0 = ivec2(floor(q)); vec2 f = q - vec2(i0);\n"
-    "  bool sparse = which != 0; vec3 fill = vec3(0.0); bool any = false;\n"
-    "  for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {\n"
-    "    ivec2 pp = clamp(i0 + ivec2(i, j), ivec2(0), ivec2(255, 191));\n"
-    "    if (!any && (!sparse || has_front(pp))) { fill = which == 2 ? texelFetch(t_raw, pp, 0).rgb : (which == 1 ? texelFetch(t_front, pp, 0).rgb : texelFetch(t_back, pp, 0).rgb); any = true; }\n"
-    "  }\n"
-    "  vec3 acc = vec3(0.0), lo = fill, hi = fill; float lb = 0.0, cov = 0.0, llo = 2.0, lhi = -1.0;\n"
-    "  for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {\n"
-    "    ivec2 pp = clamp(i0 + ivec2(i - 1, j - 1), ivec2(0), ivec2(255, 191));\n"
-    "    bool ok = !sparse || has_front(pp);\n"
-    "    vec3 c = !ok ? fill : (which == 2 ? texelFetch(t_raw, pp, 0).rgb : (which == 1 ? texelFetch(t_front, pp, 0).rgb : texelFetch(t_back, pp, 0).rgb));\n"
-    "    float wc = cr(f.x - float(i - 1)) * cr(f.y - float(j - 1)), wb = bs(f.x - float(i - 1)) * bs(f.y - float(j - 1));\n"
-    /* la forma de los bordes: mitad B-spline (redondea) y mitad bilineal (asi un punto de un solo pixel no desaparece) */
-    "    wb = mix(wb, max(0.0, 1.0 - abs(f.x - float(i - 1))) * max(0.0, 1.0 - abs(f.y - float(j - 1))), 0.5);\n"
-    "    acc += c * wc; lb += lum(c) * wb; cov += (ok ? 1.0 : 0.0) * wb;\n"
-    "    if (i >= 1 && i <= 2 && j >= 1 && j <= 2 && ok) { float l = lum(c); if (l < llo) { llo = l; lo = c; } if (l > lhi) { lhi = l; hi = c; } }\n"
-    "  }\n"
-    "  cover = sparse ? edge(cov) : 1.0;\n"
-    "  if (lhi - llo > u_sm.z) return mix(lo, hi, edge(clamp((lb - llo) / (lhi - llo), 0.0, 1.0)));\n"
-    "  if (u_sm.w > 0.5) {\n" /* zonas lisas nitidas: el pixel mas cercano, con el paso entre pixeles suavizado */
-    "    vec2 fw = fwidth(q); vec2 g = clamp((f - 0.5) / max(fw, vec2(1e-4)) + 0.5, 0.0, 1.0);\n"
-    "    ivec2 a0 = clamp(i0, ivec2(0), ivec2(255, 191)), a1 = clamp(i0 + ivec2(1, 0), ivec2(0), ivec2(255, 191));\n"
-    "    ivec2 b0 = clamp(i0 + ivec2(0, 1), ivec2(0), ivec2(255, 191)), b1 = clamp(i0 + ivec2(1, 1), ivec2(0), ivec2(255, 191));\n"
-    "    vec3 c00 = which == 2 ? texelFetch(t_raw, a0, 0).rgb : (which == 1 ? texelFetch(t_front, a0, 0).rgb : texelFetch(t_back, a0, 0).rgb);\n"
-    "    vec3 c10 = which == 2 ? texelFetch(t_raw, a1, 0).rgb : (which == 1 ? texelFetch(t_front, a1, 0).rgb : texelFetch(t_back, a1, 0).rgb);\n"
-    "    vec3 c01 = which == 2 ? texelFetch(t_raw, b0, 0).rgb : (which == 1 ? texelFetch(t_front, b0, 0).rgb : texelFetch(t_back, b0, 0).rgb);\n"
-    "    vec3 c11 = which == 2 ? texelFetch(t_raw, b1, 0).rgb : (which == 1 ? texelFetch(t_front, b1, 0).rgb : texelFetch(t_back, b1, 0).rgb);\n"
-    "    if (sparse) { if (!has_front(a0)) c00 = fill; if (!has_front(a1)) c10 = fill; if (!has_front(b0)) c01 = fill; if (!has_front(b1)) c11 = fill; }\n"
-    "    return mix(mix(c00, c10, g.x), mix(c01, c11, g.x), g.y);\n"
-    "  }\n"
-    "  return clamp(acc, 0.0, 1.0);\n"
-    "}\n"
     "void main() {\n"
     "  vec2 uv = vec2(v_p.x, 1.0 - v_p.y);\n"
     "  ivec2 p = clamp(ivec2(uv * vec2(256.0, 192.0)), ivec2(0), ivec2(255, 191));\n"
+    "  vec3 b = texelFetch(t_back, p, 0).rgb;\n"
     "  vec4 id = texelFetch(t_ids, p, 0) * 255.0;\n"
     "  int bid = int(id.r + 0.5), fid = int(id.g + 0.5); bool pend = id.b > 0.5;\n"
-    "  vec3 b, f, raw; float cover = fid != 255 ? 1.0 : 0.0;\n"
-    "  if (u_smooth != 0) {\n"
-    "    vec2 q = uv * vec2(256.0, 192.0) - 0.5; float dummy;\n"
-    "    b = smooth_layer(0, q, dummy); f = smooth_layer(1, q, cover); raw = smooth_layer(2, q, dummy);\n"
-    "  } else { b = texelFetch(t_back, p, 0).rgb; f = texelFetch(t_front, p, 0).rgb; raw = texelFetch(t_raw, p, 0).rgb; }\n"
-    /* lo que se ve debajo de la capa de delante (3D o fondo) y con ella; luego se mezclan por la cobertura */
-    "  vec3 under = b, over = f;\n"
-    "  vec4 g = u_use3d != 0 ? texture(t_3d, v_p) : vec4(0.0);\n"
-    "  if (g.a > 0.002) {\n"
-    "    vec3 c3 = g.rgb / g.a;\n"
-    "    if (u_fx3d != 0) c3 = fade(c3, u_fx3d);\n"
-    "    if (g.a < 0.998 && second(bid)) c3 = c3 * g.a + b * (1.0 - g.a);\n"
-    "    under = c3;\n"
-    "    over = (pend && second(0)) ? min((raw * u_eva + c3 * u_evb) / 16.0, vec3(1.0)) : f;\n"
-    "  } else {\n"
-    "    over = (pend && second(bid)) ? min((raw * u_eva + b * u_evb) / 16.0, vec3(1.0)) : f;\n"
+    "  vec3 f = texelFetch(t_front, p, 0).rgb, raw = texelFetch(t_raw, p, 0).rgb;\n"
+    "  vec3 c;\n"
+    "  if (fid != 255 && !pend) c = f;\n"
+    "  else {\n"
+    "    vec4 g = u_use3d != 0 ? texture(t_3d, v_p) : vec4(0.0);\n"
+    "    if (g.a > 0.002) {\n"
+    "      c = g.rgb / g.a;\n"
+    "      if (u_fx3d != 0) c = fade(c, u_fx3d);\n"
+    "      if (g.a < 0.998 && second(bid)) c = c * g.a + b * (1.0 - g.a);\n"
+    "      if (fid != 255) c = (pend && second(0)) ? min((raw * u_eva + c * u_evb) / 16.0, vec3(1.0)) : f;\n"
+    "    } else if (fid != 255) {\n"
+    "      c = (pend && second(bid)) ? min((raw * u_eva + b * u_evb) / 16.0, vec3(1.0)) : f;\n"
+    "    } else c = b;\n"
     "  }\n"
-    "  vec3 c = mix(under, over, cover);\n"
     "  if (u_bmode == 1) c = c + (1.0 - c) * u_bfac; else if (u_bmode == 2) c = c - c * u_bfac;\n"
     "  o = vec4(c, 1.0);\n"
     "}\n";
@@ -369,6 +332,11 @@ static void gpu_targets(void) { /* imagenes donde se dibuja, al tamano de la res
     glBindFramebuffer(GL_FRAMEBUFFER, gpu_msaa_fbo);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, gpu_msaa_color);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gpu_msaa_depth);
+    glGenRenderbuffers(1, &gpu_msaa_dep);
+    glBindRenderbuffer(GL_RENDERBUFFER, gpu_msaa_dep);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, gpu_samples, GL_R32F, gpu_w, gpu_h);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER, gpu_msaa_dep);
+    glDrawBuffers(2, gpu_bufs2);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) fprintf(stderr, "[gpu] imagen MSAA incompleta%c", 10);
     for (int i = 0; i < 3; i++) { /* dos imagenes resueltas que se alternan (la anterior se refleja en la pintura) y la intermedia (120 fps) */
         glGenTextures(1, &gpu_res_tex[i]);
@@ -381,6 +349,14 @@ static void gpu_targets(void) { /* imagenes donde se dibuja, al tamano de la res
         glGenFramebuffers(1, &gpu_res_fbo[i]);
         glBindFramebuffer(GL_FRAMEBUFFER, gpu_res_fbo[i]);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gpu_res_tex[i], 0);
+        glGenTextures(1, &gpu_res_dep[i]);
+        glBindTexture(GL_TEXTURE_2D, gpu_res_dep[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, gpu_w, gpu_h, 0, GL_RED, GL_FLOAT, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gpu_res_dep[i], 0);
     }
     gpu_read = malloc((size_t)gpu_w * gpu_h * 4);
     gpu_bl_w = gpu_w / 4;
@@ -682,18 +658,21 @@ static void gpu_render_frame(void) {
     glColorMask(1, 1, 1, 1);
     glDepthMask(1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    { static const GLfloat far_away[4] = {1e9f, 0, 0, 0}; glClearBufferfv(GL_COLOR, 1, far_away); } /* sin 3D: lejisimos */
     if (gpu_dst == 2) { /* imagen intermedia: de fondo la actual; si queda alguna rendija entre piezas, se ve esa
                          * imagen y no el color de fondo (salian lineas negras) */
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_STENCIL_TEST);
         glDisable(GL_BLEND);
         glDepthMask(0);
+        glDrawBuffers(1, gpu_bufs2);
         glUseProgram(gpu_copy_prog);
         glActiveTexture(GL_TEXTURE0);
         glBindSampler(0, 0);
         glBindTexture(GL_TEXTURE_2D, gpu_res_tex[gpu_res_cur ^ 1]);
         glUniform1i(glGetUniformLocation(gpu_copy_prog, "u_src"), 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawBuffers(2, gpu_bufs2);
         glUseProgram(gpu_prog);
         glDepthMask(1);
     }
@@ -708,6 +687,10 @@ static void gpu_render_frame(void) {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, gpu_res_tex[gpu_res_cur ^ 1]);
     glBindSampler(1, 0);
+    glUniform1i(U("u_prevdep"), 2);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, gpu_res_dep[gpu_res_cur ^ 1]);
+    glBindSampler(2, 0);
     glActiveTexture(GL_TEXTURE0);
     glUniform1i(U("u_has_prev"), gpu_have_prev && ds->shiny);
     glUniform2f(U("u_res"), (float)gpu_w, (float)gpu_h);
@@ -773,7 +756,7 @@ static void gpu_render_frame(void) {
             glUniform1i(U("u_maskonly"), 0);
             glColorMask(1, 1, 1, 1);
             /* 2) pintar la sombra donde quede marca, una sola vez por pixel (se borra la marca al pintar) */
-            glEnable(GL_BLEND);
+            glEnable(GL_BLEND); glDisablei(GL_BLEND, 1);
             glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
             glBlendEquationSeparate(GL_FUNC_ADD, GL_MAX);
             glStencilFunc(GL_EQUAL, 0x80, 0x80);
@@ -787,7 +770,7 @@ static void gpu_render_frame(void) {
             gpu_set_poly_state(p, ti, ds, 2, &last_ls);
             if (p->glow == 1) glUniform3f(U("u_glow"), 1.15f, 0.14f, 0.08f);
             else glUniform3f(U("u_glow"), 0.35f, 0.35f, 0.32f); /* el halo cubre toda la trasera: tenue */
-            glEnable(GL_BLEND);
+            glEnable(GL_BLEND); glDisablei(GL_BLEND, 1);
             glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ZERO, GL_ONE);
             glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
             glDepthMask(0);
@@ -809,7 +792,7 @@ static void gpu_render_frame(void) {
         }
         gpu_set_poly_state(p, ti, ds, 2, &last_ls);
         if (ds->blend) {
-            glEnable(GL_BLEND);
+            glEnable(GL_BLEND); glDisablei(GL_BLEND, 1);
             glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE);
             glBlendEquationSeparate(GL_FUNC_ADD, GL_MAX);
         } else {
@@ -843,6 +826,11 @@ static void gpu_render_frame(void) {
     glBindFramebuffer(GL_READ_FRAMEBUFFER, gpu_msaa_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gpu_res_fbo[dst]);
     glBlitFramebuffer(0, 0, gpu_w, gpu_h, 0, 0, gpu_w, gpu_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glReadBuffer(GL_COLOR_ATTACHMENT1); /* las distancias, a su imagen */
+    glDrawBuffers(1, &gpu_bufs2[1]);
+    glBlitFramebuffer(0, 0, gpu_w, gpu_h, 0, 0, gpu_w, gpu_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glDrawBuffers(1, gpu_bufs2);
     gpu_bloom_done = 0;
     if (ds->bloom) { /* resplandor, en la imagen ya resuelta */
         glDisable(GL_DEPTH_TEST);
@@ -1155,17 +1143,6 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
         glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_evb"), (float)g->evb);
         glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_bmode"), g->bright_factor ? g->bright_mode : 0);
         glUniform1f(glGetUniformLocation(gpu_comp_prog, "u_bfac"), g->bright_factor / 16.0f);
-        glUniform1i(glGetUniformLocation(gpu_comp_prog, "u_smooth"), video_smooth2d() && g->w > 256); /* a x1 no hace falta */
-        { /* parametros: borde (inicio, fin de la transicion), cuando hay borde, zonas lisas nitidas. NFS_SM2D=a,b,c,d */
-            static float sm[4] = {0.45f, 0.55f, 0.08f, 1.0f}; /* bordes nitidos y zonas lisas nitidas (al usuario la version
-                                                              * suave, 0.3/0.7/0.15/0, le parecia borrosa) */
-            static int read;
-            if (!read) {
-                read = 1;
-                if (getenv("NFS_SM2D")) sscanf(getenv("NFS_SM2D"), "%f,%f,%f,%f", &sm[0], &sm[1], &sm[2], &sm[3]);
-            }
-            glUniform4f(glGetUniformLocation(gpu_comp_prog, "u_sm"), sm[0], sm[1], sm[2], sm[3]);
-        }
         glViewport(g->x, win_h - g->y - g->h, g->w, g->h);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
