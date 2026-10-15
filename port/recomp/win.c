@@ -551,7 +551,7 @@ void win_frame(void) {
         if (real_later) avg = avg * 0.9 + work * 0.1; /* media de las ultimas con intermedia */
         if (real_later && (avg > 15.5 || work > 24)) { pause = 60; avg = 12; } /* va justa de verdad (no un pico suelto) */
         else if (pause > 0) pause--;
-        fps120_skip = pause > 0;
+        fps120_skip = pause > 0 && !getenv("NFS_FPS120_FORCE"); /* pruebas: siempre con intermedia */
     }
     if (now.QuadPart > next_tick.QuadPart + freq.QuadPart / 4) next_tick = now; /* muy retrasado: no recuperar */
     while (now.QuadPart < next_tick.QuadPart) {

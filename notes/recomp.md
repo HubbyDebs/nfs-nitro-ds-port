@@ -668,3 +668,16 @@ cielo raro. Captura `Capturaug 2.PNG`.
 - Herramientas de prueba: `NFS_WINSHOT_EVERY/FROM/TO` (captura de lo que pinta la gráfica; `_i` = intermedia),
   `NFS_TEST_OFFSCREEN` (ventana fuera de la vista), `NFS_NOMENU`, `NFS_MENU_SNAPSHOT` (menú y controles en PNG sin
   mostrarlos), `NFS_FPS120_LOG`, `NFS_LODBIAS`.
+
+### Ajustes tras probarlo el usuario (2026-10-15)
+- **2D**: la versión suave le parecía borrosa. Ahora (valores por defecto de `u_sm`, `NFS_SM2D=a,b,c,d` para
+  probar): transición de borde estrecha (0,45-0,55: menos de un píxel de pantalla), borde desde una diferencia de
+  luminancia de 0,08, y zonas lisas nítidas (el píxel más cercano con el paso suavizado, en vez de Catmull-Rom).
+  La forma de los bordes es mitad B-spline y mitad bilineal: así no desaparecen los puntos de un solo píxel (el
+  indicador de carga). Elegida entre 5 variantes con capturas de la gráfica (menú, pantalla de modo, carrera).
+- **120 fps**: "algunas texturas se mueven mucho". En la pista hay tramos iguales seguidos y se emparejaba un tramo
+  con el de al lado (el más cercano). Ahora se prueba primero el que toca en el orden de dibujo y se exige que las
+  coordenadas de textura coincidan (salvo reflejos). Además la intermedia empieza con la imagen actual de fondo: si
+  queda una rendija entre piezas se ve esa imagen y no una línea negra (VERIFICADO en la captura que la tenía).
+  Las texturas animadas del juego (flechas de las vallas) cambian a 60 por segundo: no se interpolan.
+  `NFS_FPS120_FORCE=1` (pruebas): intermedia siempre.
