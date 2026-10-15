@@ -727,3 +727,9 @@ Herramientas: `NFS_FPS120_DEBUG=fotograma`, `NFS_FPS120_LOGALL`.
   La consola lo muestra igual: el port era fiel. Opción nueva `NFS_NO_WHITE_FLASH` (casilla del menú, activada):
   con el 3D en el motor principal (carrera) no se aplica el aclarado del brillo maestro. Fundidos a negro y menús,
   sin cambios. VERIFICADO con la captura de la gráfica en "Pulsa el Botón A".
+- **El resplandor con la X y el "!" (VERIFICADO, resuelto)**: con el "!" de la barra de salida y la X, el juego hace
+  parpadear la tabla de tonos (registros 0x380-0x3BF; la última entrada oscila entre 4a52 y 739c cada 3-4
+  imágenes). DISP3DCNT tiene el resaltado activado (bit 1): en los polígonos en modo 2 (coches, carretera) esa tabla
+  se suma al color, así que todo destella en blanco. Con "Quitar los destellos blancos" se usa la última tabla que
+  estuvo quieta al menos 60 imágenes (`gx.c`). VERIFICADO con capturas de la gráfica en la imagen 2732 del guion
+  `in_rev.txt` (A pulsado desde la salida): coche quemado de blanco sin la opción, normal con ella.

@@ -71,6 +71,7 @@ int video_shadows(void);
 int video_shiny(void);
 int video_bloom(void);
 int video_sharp(void);
+int video_no_white_flash(void);
 static Poly *polys;
 static int poly_count;
 
@@ -1703,7 +1704,20 @@ static void render(void) {
     draw_state.env_pixel = draw_state.pixel_light;
     draw_state.shiny = video_shiny() && draw_state.pixel_light;
     draw_state.highlight = (disp >> 1) & 1;
-    for (int i = 0; i < 32; i++) rgb15(io_reg(0x380 + (i & ~1) * 2) >> ((i & 1) * 16), draw_state.toon[i]);
+    { /* tabla de tonos (en modo resaltado se SUMA al color de los poligonos en modo 2: carretera, coches).
+       * Con el "!" de la salida y la X, el juego la hace parpadear hasta casi blanco cada pocas imagenes y toda la
+       * escena destella (VERIFICADO con NFS_BRIGHT_LOG: la ultima entrada oscila entre 4a52 y 739c). Con la opcion
+       * "quitar los destellos blancos" se usa la ultima tabla que estuvo quieta al menos un segundo. */
+        static uint32_t prev[16], base[16];
+        static int stable = 0, have_base = 0;
+        uint32_t t[16];
+        for (int i = 0; i < 16; i++) t[i] = io_reg(0x380 + i * 4);
+        if (!memcmp(t, prev, sizeof t)) stable++;
+        else { stable = 0; memcpy(prev, t, sizeof t); }
+        if (stable >= 60) { memcpy(base, t, sizeof t); have_base = 1; }
+        const uint32_t *use = (have_base && video_no_white_flash()) ? base : t;
+        for (int i = 0; i < 32; i++) rgb15(use[i >> 1] >> ((i & 1) * 16), draw_state.toon[i]);
+    }
     draw_state.fog = ((disp >> 7) & 1) && video_fog();
     draw_state.fog_alpha_only = (disp >> 6) & 1;
     draw_state.fog_step = 0x400 >> ((disp >> 8) & 15);

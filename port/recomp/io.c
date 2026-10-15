@@ -242,7 +242,7 @@ void io_write(uint32_t addr, uint32_t value, int size) {
         static int on = -1;
         if (on < 0) on = getenv("NFS_BRIGHT_LOG") != 0;
         uint32_t o = addr & 0xFFFF;
-        if (on && (addr >> 16) == 0x0400 && ((o & 0xEFFF) >= 0x50 && (o & 0xEFFF) < 0x70)) {
+        if (on && (addr >> 16) == 0x0400 && (((o & 0xEFFF) >= 0x50 && (o & 0xEFFF) < 0x70) || (o >= 0x330 && o < 0x3C0))) {
             extern uint32_t g_frame;
             fprintf(stderr, "[brillo] f%u %08x = %08x (%d bytes)%c", g_frame, addr, value, size, 10);
         }
