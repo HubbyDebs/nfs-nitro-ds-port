@@ -1,3 +1,3 @@
-# Scripts de Windows con saltos de linea de Windows (tambien en el zip de las releases)
-*.cmd text eol=crlf
-*.ps1 text eol=crlf
+# Scripts de Windows guardados tal cual, con saltos de linea de Windows (el zip de las releases los copia asi)
+*.cmd -text
+*.ps1 -text
