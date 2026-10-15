@@ -106,6 +106,7 @@ static int gpu_state = 0; /* 0 sin probar, 1 funcionando, -1 no disponible */
 int gpu_bloom_done;        /* este fotograma el resplandor ya lo hizo la grafica */
 static GLuint gpu_bl_prog[3], gpu_bl_fbo[2], gpu_bl_tex[2]; /* resplandor: brillo, difuminado, suma */
 static GLuint gpu_copy_prog;
+int gpu_diag_request; /* F12: guardar la siguiente imagen de la ventana */
 /* distancia de cada pixel (w de recorte), en una segunda imagen junto al color: el reflejo de la pintura solo usa
  * lo que esta claramente mas lejos que el coche (antes reflejaba el icono de la X que el juego pone encima) */
 static GLuint gpu_msaa_dep, gpu_res_dep[3];
@@ -278,15 +279,16 @@ static const char *GPU_COMP_FS =
     "  ivec2 p = clamp(ivec2(uv * vec2(256.0, 192.0)), ivec2(0), ivec2(255, 191));\n"
     "  vec3 b = texelFetch(t_back, p, 0).rgb;\n"
     "  vec4 id = texelFetch(t_ids, p, 0) * 255.0;\n"
+    "  int wa = int(id.a + 0.5); bool show3d = (wa & 1) != 0, fxon = (wa & 2) != 0;\n" /* ventanas: 3D visible, efectos */
     "  int bid = int(id.r + 0.5), fid = int(id.g + 0.5); bool pend = id.b > 0.5;\n"
     "  vec3 f = texelFetch(t_front, p, 0).rgb, raw = texelFetch(t_raw, p, 0).rgb;\n"
     "  vec3 c;\n"
     "  if (fid != 255 && !pend) c = f;\n"
     "  else {\n"
-    "    vec4 g = u_use3d != 0 ? texture(t_3d, v_p) : vec4(0.0);\n"
+    "    vec4 g = (u_use3d != 0 && show3d) ? texture(t_3d, v_p) : vec4(0.0);\n"
     "    if (g.a > 0.002) {\n"
     "      c = g.rgb / g.a;\n"
-    "      if (u_fx3d != 0) c = fade(c, u_fx3d);\n"
+    "      if (u_fx3d != 0 && fxon) c = fade(c, u_fx3d);\n"
     "      if (g.a < 0.998 && second(bid)) c = c * g.a + b * (1.0 - g.a);\n"
     "      if (fid != 255) c = (pend && second(0)) ? min((raw * u_eva + c * u_evb) / 16.0, vec3(1.0)) : f;\n"
     "    } else if (fid != 255) {\n"
@@ -1213,13 +1215,15 @@ int gpu_present(const GpuScreen *top, const GpuScreen *bottom, void *hwnd, int w
             from = getenv("NFS_WINSHOT_FROM") ? atoi(getenv("NFS_WINSHOT_FROM")) : 0;
             to = getenv("NFS_WINSHOT_TO") ? atoi(getenv("NFS_WINSHOT_TO")) : 0x7FFFFFFF;
         }
-        if (every > 0 && (int)g_frame >= from && (int)g_frame <= to && g_frame % (uint32_t)every == 0) {
+        int diag = gpu_diag_request;
+        gpu_diag_request = 0;
+        if (diag || (every > 0 && (int)g_frame >= from && (int)g_frame <= to && g_frame % (uint32_t)every == 0)) {
             uint32_t *px = malloc((size_t)win_w * win_h * 4), *fl = malloc((size_t)win_w * win_h * 4);
             glReadBuffer(GL_BACK);
             glReadPixels(0, 0, win_w, win_h, GL_BGRA, GL_UNSIGNED_BYTE, px);
             for (int y = 0; y < win_h; y++) memcpy(fl + (size_t)y * win_w, px + (size_t)(win_h - 1 - y) * win_w, (size_t)win_w * 4);
             char name[64];
-            snprintf(name, sizeof name, "win_%05u%s.png", g_frame, gpu_present_interp && gpu_interp_ready ? "_i" : "");
+            snprintf(name, sizeof name, diag ? "diagnostico_%05u%s.png" : "win_%05u%s.png", g_frame, gpu_present_interp && gpu_interp_ready ? "_i" : "");
             void video_save_png(const char *path, const uint32_t *pixels, int w, int h);
             video_save_png(name, fl, win_w, win_h);
             free(px);

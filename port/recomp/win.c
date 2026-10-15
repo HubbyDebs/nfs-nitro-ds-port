@@ -9,7 +9,8 @@
  * F1 cambia la disposicion de las pantallas; F2 activa/desactiva el filtrado de texturas;
  * F3 la luz por pixel; F4 cambia la subdivision de los modelos iluminados (0, 1 o 2 niveles);
  * F5 la niebla; F6 las sombras; F7 el barniz de los coches; F8 el resplandor;
- * F9 dibujar el 3D con la tarjeta grafica o por software; F11 pantalla completa (Alt+Intro tambien).
+ * F9 dibujar el 3D con la tarjeta grafica o por software; F11 pantalla completa (Alt+Intro tambien);
+ * F12 guarda un diagnostico (captura y registros) en la carpeta del juego.
  *
  * Variables de entorno (todas opcionales):
  *   NFS_LAYOUT=n       0 = una pantalla encima de otra; 1 = una al lado de otra;
@@ -288,6 +289,28 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             layout = (layout + 1) % 4;
             resize_window();
         }
+        if (wp == VK_F12 && !(lp & 0x40000000)) { /* diagnostico: captura y registros (para cazar fallos raros) */
+            void gx_diag(FILE *f, const char *name);
+            extern int gpu_diag_request;
+            char name[64];
+            snprintf(name, sizeof name, "diagnostico_%05u.txt", g_frame);
+            FILE *f = fopen(name, "w");
+            if (f) {
+                fprintf(f, "Diagnostico del port de NFS Nitro, fotograma %u\n", g_frame);
+                for (int e = 0; e < 2; e++) { /* motores 2D: control, fondos, ventanas, efectos, brillo */
+                    const uint8_t *r = io_mem(e);
+                    fprintf(f, "motor %c:", 'A' + e);
+                    for (int o = 0; o < 0x70; o += 4)
+                        fprintf(f, " %02x=%08x", o, (uint32_t)(r[o] | r[o + 1] << 8 | r[o + 2] << 16 | (uint32_t)r[o + 3] << 24));
+                    fprintf(f, "\n");
+                }
+                fprintf(f, "POWCNT1=%08x VRAMCNT=%08x %08x\n", io_reg(0x304), io_reg(0x240), io_reg(0x244));
+                gx_diag(f, name);
+                fclose(f);
+                gpu_diag_request = 1;
+                fprintf(stderr, "[diagnostico] guardado %s (y la imagen diagnostico_%05u.png)%c", name, g_frame, 10);
+            }
+        }
         if (wp == VK_F11 && !(lp & 0x40000000)) { /* pantalla completa / ventana */
             fullscreen = !fullscreen;
             resize_window();
@@ -484,6 +507,8 @@ void win_frame(void) {
     } else {
         win_gpu_present = 0;
     }
+    if (window && getenv("NFS_DIAG_AT") && g_frame == (uint32_t)atoi(getenv("NFS_DIAG_AT"))) /* pruebas: F12 simulada */
+        PostMessageA(window, WM_KEYDOWN, VK_F12, 0);
     if ((!headless && !win_gpu_present) || shot) video_render(frame);
     if (shot) {
         char name[64];

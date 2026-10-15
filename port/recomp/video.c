@@ -366,9 +366,9 @@ typedef struct UpscaleJob {
 
 /* Un pixel 3D encima de lo de detras: si es translucido (o la niebla le ha bajado el alfa) se mezcla
  * con su propio alfa con la capa de debajo, si esa capa es "segundo objetivo" de la mezcla */
-static uint32_t over_3d(uint32_t g, uint32_t bc, int back_layer, const UpscaleJob *j) {
+static uint32_t over_3d(uint32_t g, uint32_t bc, int back_layer, const UpscaleJob *j, int idx) {
     uint32_t ga = g >> 24, c = g | 0xFF000000u;
-    if (j->fx_3d) c = fade(c, j->fx_3d);
+    if (j->fx_3d && ((wmask[idx] >> 5) & 1)) c = fade(c, j->fx_3d); /* el efecto, solo donde las ventanas lo permiten */
     if (ga < 255 && ((j->br.cnt >> 8 >> back_layer) & 1)) {
         uint32_t out = 0xFF000000u;
         for (int s = 0; s < 24; s += 8)
@@ -410,9 +410,9 @@ static void upscale_row(void *ctx, int y) {
                 continue;
             }
             for (int i = 0; i < S; i++) {
-                uint32_t c = g[x * S + i];
+                uint32_t c = (wmask[idx] & 1) ? g[x * S + i] : 0; /* el 3D (BG0) tapado por las ventanas */
                 if (c >> 24) {
-                    c = (c >> 24) == 255 && !j->fx_3d ? c : over_3d(c, bc, bid[x], j);
+                    c = (c >> 24) == 255 && !j->fx_3d ? c : over_3d(c, bc, bid[x], j, idx);
                     if (fid[x] != NO_LAYER) c = over_front(idx, c, 0, j);
                 } else {
                     c = fid[x] != NO_LAYER ? over_front(idx, bc, bid[x], j) : bc;
@@ -540,7 +540,12 @@ static void pack_screen(int k, Engine *e, GpuScreen *g) {
     memcpy(scr_back[k], back2d, sizeof back2d);
     memcpy(scr_front[k], front2d, sizeof front2d);
     memcpy(scr_raw[k], front_raw, sizeof front_raw);
-    for (int i = 0; i < W * H; i++) scr_ids[k][i] = back_id[i] | (front_id[i] << 8) | (front_pend[i] << 16) | 0xFF000000u;
+    /* alfa: 0xF0 | 3D visible en este pixel (ventanas, bit 0 de WININ/WINOUT) | efectos permitidos (bit 5) << 1.
+     * El juego hace la X blanca encima del coche con un sprite "ventana" con forma de X y el brillo del 3D solo
+     * dentro de esa ventana; antes el brillo se aplicaba a todo el 3D y la escena entera salia blanqueada. */
+    for (int i = 0; i < W * H; i++)
+        scr_ids[k][i] = back_id[i] | (front_id[i] << 8) | (front_pend[i] << 16) |
+                        (uint32_t)(0xF0 | (wmask[i] & 1) | (((wmask[i] >> 5) & 1) << 1)) << 24;
     uint32_t bright = rd16(e->reg + 0x6C);
     g->back = scr_back[k]; g->front = scr_front[k]; g->raw = scr_raw[k]; g->ids = scr_ids[k];
     g->use3d = has_3d; g->fx3d = fx_3d; g->cnt = (int)br.cnt; g->eva = br.eva; g->evb = br.evb;

@@ -709,3 +709,15 @@ Medido con `flicker.py` (fuera del proyecto): píxeles donde la imagen real ante
 - La intermedia refleja en la pintura la misma imagen anterior que la imagen real, y la luz y los reflejos usan
   normales y posiciones a medio camino.
 Herramientas: `NFS_FPS120_DEBUG=fotograma`, `NFS_FPS120_LOGALL`.
+
+### La X que blanquea la escena (2026-10-15, sin resolver del todo)
+- Captura del usuario (`problema X…PNG`): con la X encima del coche, todo el 3D sale blanqueado (carretera y coches).
+- Arreglado de paso (comportamiento de la consola que faltaba): el efecto de brillo del 3D y el propio 3D respetan
+  las ventanas (WININ/WINOUT y la ventana de sprites) por píxel, en la gráfica (alfa de `ids`) y en el procesador.
+  Si el juego hace la X con una ventana, ya solo se aclara dentro. En la carrera de prueba el juego no usa
+  ventanas (BLDCNT 00bf/00ff, EVY 0-1, sin sprites ventana): no se pudo comprobar con la X.
+- **F12**: guarda `diagnostico_NNNNN.txt` (registros de los dos motores 2D, DISP3DCNT, tabla de tonos, niebla,
+  y los polígonos del siguiente dibujado por atributos y textura) y `diagnostico_NNNNN.png` en la carpeta del juego.
+  En carrera normal DISP3DCNT=049b (resaltado activado: los polígonos en modo 2 suman la tabla de tonos, gris
+  oscuro). HIPÓTESIS: con la X el juego cambia esa tabla o el modo; falta el diagnóstico del usuario.
+  `NFS_DIAG_AT=fotograma` lo simula en pruebas.

@@ -1061,6 +1061,59 @@ static void smooth_texture(TexImage *t) {
     t->version++;
 }
 
+/* F12 (win.c): estado del 3D para diagnosticar fallos raros. Los poligonos se apuntan en el siguiente dibujado
+ * (al pulsar la tecla la lista ya esta vacia) */
+static char diag_name[64];
+void gx_diag(FILE *f, const char *name) {
+    fprintf(f, "DISP3DCNT=%08x clear=%08x %08x fog=%08x %08x alphatest=%08x\n", io_reg(0x060), io_reg(0x350), io_reg(0x354),
+            io_reg(0x358), io_reg(0x35C), io_reg(0x340));
+    fprintf(f, "toon:");
+    for (int i = 0; i < 16; i++) fprintf(f, " %08x", io_reg(0x380 + i * 4));
+    fprintf(f, "\nedge:");
+    for (int i = 0; i < 4; i++) fprintf(f, " %08x", io_reg(0x330 + i * 4));
+    fprintf(f, "\nniebla tabla:");
+    for (int i = 0; i < 8; i++) fprintf(f, " %08x", io_reg(0x360 + i * 4));
+    fprintf(f, "\n");
+    snprintf(diag_name, sizeof diag_name, "%s", name);
+}
+
+static void gx_diag_polys(void) {
+    FILE *f = fopen(diag_name, "a");
+    diag_name[0] = 0;
+    if (!f) return;
+    int modes[4] = {0}, lit = 0, trans = 0;
+    for (int i = 0; i < poly_count; i++) {
+        modes[(polys[i].attr >> 4) & 3]++;
+        lit += polys[i].lit;
+        trans += polys[i].translucent;
+    }
+    fprintf(f, "DISP3DCNT al dibujar=%08x\npoligonos %d: modulacion %d, calcomania %d, toon/resaltado %d, sombra %d; con luz %d, translucidos %d\n",
+            io_reg(0x060), poly_count, modes[0], modes[1], modes[2], modes[3], lit, trans);
+    static struct { uint32_t attr, tex; int n; float x0, y0; float r, g, b; } k[4096];
+    int nk = 0;
+    for (int i = 0; i < poly_count; i++) {
+        int j = 0;
+        while (j < nk && (k[j].attr != polys[i].attr || k[j].tex != polys[i].tex)) j++;
+        if (j == nk) {
+            if (nk == 4096) continue;
+            k[nk].attr = polys[i].attr; k[nk].tex = polys[i].tex; k[nk].n = 0;
+            k[nk].x0 = polys[i].v[0].x; k[nk].y0 = polys[i].v[0].y;
+            k[nk].r = polys[i].v[0].r; k[nk].g = polys[i].v[0].g; k[nk].b = polys[i].v[0].b;
+            nk++;
+        }
+        k[j].n++;
+    }
+    fprintf(f, "combinaciones de atributos y textura (por numero de poligonos; color del primer vertice, sitio en pantalla):\n");
+    for (int t = 0; t < 60 && t < nk; t++) {
+        int b = t;
+        for (int j = t + 1; j < nk; j++) if (k[j].n > k[b].n) b = j;
+        typeof(k[0]) tmp = k[t]; k[t] = k[b]; k[b] = tmp;
+        fprintf(f, "  attr %08x tex %08x: %4d poligonos, color %.2f %.2f %.2f, en (%.0f,%.0f)\n", k[t].attr, k[t].tex, k[t].n,
+                k[t].r, k[t].g, k[t].b, k[t].x0, k[t].y0);
+    }
+    fclose(f);
+}
+
 static const TexImage *get_texture(uint32_t tp, uint32_t pal) {
     if (((tp >> 26) & 7) == 0) return 0;
     uint32_t key = (tp & 0x3FFFFFFFu) * 2654435761u + pal * 40503u;
@@ -1689,6 +1742,7 @@ static void render(void) {
         if (p->smooth && poly_tex[i]) smooth_texture((TexImage *)poly_tex[i]);
     }
     vram_epoch++; /* lo que el juego escriba a partir de ahora es posterior a estas texturas */
+    if (diag_name[0]) gx_diag_polys(); /* F12 */
     if (getenv("NFS_GLOW_LOG")) /* depuracion: luces de freno / marcha atras */
         for (int i = 0; i < poly_count; i++)
             if (polys[i].glow)

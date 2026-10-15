@@ -12,6 +12,7 @@ rem F1 = cambiar la disposicion de las pantallas.  F2 = activar/desactivar el fi
 rem F3 = luz por pixel si/no.  F4 = subdivision de los coches: 0, 1 o 2 niveles.
 rem F5 = niebla si/no.  F6 = sombras si/no.  F7 = brillo y reflejos de los coches si/no.
 rem F8 = resplandor (bloom) si/no.  F9 = dibujar el 3D con la tarjeta grafica o con el procesador.
+rem F11 = pantalla completa.  F12 = guardar un diagnostico (captura y datos) en la carpeta del juego.
 
 set BUILD=%NFS_BUILD%
 if "%BUILD%"=="" set BUILD=%USERPROFILE%\nfs-nitro-build\game
